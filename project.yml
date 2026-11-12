@@ -24,8 +24,6 @@ targets:
     bundleId: com.vibe.MasteringAU
     sources:
       - path: Source/Plugin/MasteringAU.mm
-      - path: Source/Plugin/MasteringAU.h
-      - path: Source/Plugin/MasteringAU-Bridging-Header.h
       - path: Source/Plugin/Info.plist
     settings:
       base:
@@ -46,7 +44,6 @@ targets:
       - path: Source/Plugin/View/MasteringViewController.swift
       - path: Source/Plugin/View/MasteringView.swift
       - path: Source/Plugin/View/Info.plist
-      - path: Source/Plugin/MasteringAU.h
     settings:
       base:
         PRODUCT_BUNDLE_PACKAGE_TYPE: XPC!
