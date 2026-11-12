@@ -31,6 +31,10 @@ targets:
     sources:
       - path: Source/Plugin/MasteringAU.mm
         compiler-flags: "-std=c++17"
+    frameworks:
+      - Foundation.framework
+      - AVFAudio.framework
+      - AudioToolbox.framework
     settings:
       base:
         PRODUCT_BUNDLE_PACKAGE_TYPE: XPC!
