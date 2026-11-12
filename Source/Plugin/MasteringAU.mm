@@ -74,6 +74,12 @@ enum {
                                                    error:(NSError **)error {
     return [[MasteringAUAudioUnit alloc] initWithComponentDescription:desc options:0 error:error];
 }
+// Required by NSExtensionRequestHandling (which AUAudioUnitFactory extends).
+// AUv3 instantiation goes through createAudioUnitWithComponentDescription:error:
+// over XPC, so the generic extension-request entry point is a no-op here.
+- (void)beginRequestWithExtensionContext:(NSExtensionContext *)context {
+    (void)context;
+}
 @end
 
 @implementation MasteringAUAudioUnit
