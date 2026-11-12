@@ -31,9 +31,10 @@ targets:
     type: app-extension
     platform: macOS
     productName: MasteringAU
-    # Must be prefixed with the host app's bundle id (com.vibe.MasteringAUHost),
-    # otherwise embedding fails ValidateEmbeddedBinary and pluginkit rejects it.
-    bundleId: com.vibe.MasteringAUHost.MasteringAU
+    # NOTE: XcodeGen 2.42 has no target-level `bundleId` key (it is silently
+    # ignored and PRODUCT_BUNDLE_IDENTIFIER defaults to bundleIdPrefix + name).
+    # Set it explicitly: the embedded appex id must be prefixed with the host
+    # app's id or ValidateEmbeddedBinary fails and pluginkit rejects it.
     sources:
       - path: Source/Plugin/MasteringAU.mm
         compiler-flags: "-std=c++17"
@@ -54,6 +55,7 @@ targets:
         GENERATE_INFOPLIST_FILE: NO
         CLANG_CXX_LANGUAGE_STANDARD: c++17
         OTHER_CPLUSPLUSFLAGS: "-std=c++17"
+        PRODUCT_BUNDLE_IDENTIFIER: com.vibe.MasteringAUHost.MasteringAU
         OTHER_LDFLAGS: "-framework Foundation -framework AVFAudio -framework AudioToolbox"
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks @executable_path/Frameworks"
 
@@ -65,12 +67,12 @@ targets:
     type: application
     platform: macOS
     productName: MasteringAUHost
-    bundleId: com.vibe.MasteringAUHost
     sources:
       - path: Source/Host/main.swift
     dependencies:
       - target: MasteringAU
     settings:
       base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.vibe.MasteringAUHost
         INFOPLIST_FILE: Source/Host/Info.plist
         GENERATE_INFOPLIST_FILE: NO
