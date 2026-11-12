@@ -28,6 +28,8 @@
         <string>$(PRODUCT_MODULE_NAME).MasteringAUAudioUnitFactory</string>
         <key>NSExtensionAttributes</key>
         <dict>
+            <key>NSExtensionActivationRule</key>
+            <string>TRUEPREDICATE</string>
             <key>AudioComponents</key>
             <array>
                 <dict>
@@ -43,6 +45,12 @@
                     <string>MstA</string>
                     <key>version</key>
                     <integer>1</integer>
+                    <key>sandboxSafe</key>
+                    <true/>
+                    <key>tags</key>
+                    <array>
+                        <string>Effects</string>
+                    </array>
                 </dict>
             </array>
         </dict>

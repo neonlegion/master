@@ -3,41 +3,51 @@
 #include "../DSP/Engine.h"
 #include "../DSP/Presets.h"
 #include <cstring>
-#include <mutex>
 #include <vector>
 
 using namespace mast;
 
-static AudioComponentDescription gComponentDescription = {
-    kAudioUnitType_Effect,   // 'aufx'
-    'MstA',                  // subtype
-    'Vibe',                  // manufacturer
-    0, 0
+// Meter parameter addresses, kept clear of the ParamId range (0..P_Count-1)
+// so they never collide with audio parameters.
+enum {
+    M_Momentary = 1000,
+    M_ShortTerm,
+    M_Integrated,
+    M_LRA,
+    M_TruePeak,
+    M_LimiterGR,
+    M_MbGR0,
+    M_MbGR1,
+    M_MbGR2,
+    M_MbGR3,
+    M_MeterCount
 };
 
 @interface MasteringAUAudioUnit () {
     MasteringEngine _engine;
-    std::mutex _meterMutex;
-    NSDictionary<NSString *, NSNumber *> *_meterSnapshot;
+    AUAudioUnitBusArray *_inputBusArray;
+    AUAudioUnitBusArray *_outputBusArray;
+    AUInternalRenderBlock _renderBlock;
     std::vector<AUParameter *> _flatParams; // index == AUParameterAddress == ParamId
+    AUParameter *_meterParams[M_MeterCount];
     AudioBufferList *_inputABL;
-    std::vector<float> _inL, _inR, _outL, _outR;
+    std::vector<float> _inL, _inR, _inInter, _outL, _outR, _outInter;
+    uint32_t _inputChannels;
+    bool _inputInterleaved;
     double _sampleRate;
 }
+// factoryPresets is readonly in the public header; redeclare readwrite here.
+@property (nonatomic, readwrite, copy) NSArray<AUAudioUnitPreset *> *factoryPresets;
 @end
 
 @implementation MasteringAUAudioUnitFactory
-- (AUAudioUnit *)createAudioUnitWithComponentDescription:(AudioComponentDescription)desc {
-    MasteringAUAudioUnit *unit = [[MasteringAUAudioUnit alloc] initWithComponentDescription:desc error:nil];
-    return unit;
+- (AUAudioUnit *)createAudioUnitWithComponentDescription:(AudioComponentDescription)desc
+                                                   error:(NSError **)error {
+    return [[MasteringAUAudioUnit alloc] initWithComponentDescription:desc options:0 error:error];
 }
 @end
 
 @implementation MasteringAUAudioUnit
-
-+ (AudioComponentDescription)componentDescription {
-    return gComponentDescription;
-}
 
 - (instancetype)initWithComponentDescription:(AudioComponentDescription)desc
                                      options:(AudioComponentInstantiationOptions)options
@@ -47,6 +57,8 @@ static AudioComponentDescription gComponentDescription = {
 
     _sampleRate = 48000.0;
     _engine.setSampleRate(_sampleRate);
+    _inputChannels = 2;
+    _inputInterleaved = false;
 
     // Stereo (or mono) float32 non-interleaved buses.
     AVAudioFormat *format = [[AVAudioFormat alloc] initWithCommonFormat:AVAudioPCMFormatFloat32
@@ -58,14 +70,22 @@ static AudioComponentDescription gComponentDescription = {
     AUAudioUnitBus *outputBus = [[AUAudioUnitBus alloc] initWithFormat:format error:&err];
     inputBus.supportedChannelCounts = @[@1, @2];
     outputBus.supportedChannelCounts = @[@1, @2];
-    self.inputBusArray = @[inputBus];
-    self.outputBusArray = @[outputBus];
+    _inputBusArray = [[AUAudioUnitBusArray alloc] initWithAudioUnit:self
+                                                             busType:AUAudioUnitBusTypeInput
+                                                              busses:@[inputBus]];
+    _outputBusArray = [[AUAudioUnitBusArray alloc] initWithAudioUnit:self
+                                                              busType:AUAudioUnitBusTypeOutput
+                                                               busses:@[outputBus]];
     self.maximumFramesToRender = 4096;
 
     [self buildParameterTree];
     [self buildFactoryPresets];
     return self;
 }
+
+// The base class declares these readonly; subclasses override the getters.
+- (AUAudioUnitBusArray *)inputBusses { return _inputBusArray; }
+- (AUAudioUnitBusArray *)outputBusses { return _outputBusArray; }
 
 #pragma mark - Parameters
 
@@ -76,6 +96,23 @@ static AudioUnitParameterUnit unitForString(const char *u) {
     if (!strcmp(u, "%"))    return kAudioUnitParameterUnit_Percent;
     if (!strcmp(u, "bool")) return kAudioUnitParameterUnit_Boolean;
     return kAudioUnitParameterUnit_Indexed;
+}
+
+static AUParameter *makeMeterParam(NSString *identifier, NSString *name,
+                                   AUParameterAddress address, float minV, float maxV) {
+    AUParameter *p = [AUParameterTree createParameterWithIdentifier:identifier
+                                                                name:name
+                                                             address:address
+                                                                 min:minV
+                                                                 max:maxV
+                                                                unit:kAudioUnitParameterUnit_Decibels
+                                                            unitName:nil
+                                                               flags:(kAudioUnitParameterFlag_IsReadable |
+                                                                      kAudioUnitParameterFlag_MeterReadOnly)
+                                                        valueStrings:nil
+                                                 dependentParameters:nil];
+    p.value = minV;
+    return p;
 }
 
 - (void)buildParameterTree {
@@ -100,8 +137,10 @@ static AudioUnitParameterUnit unitForString(const char *u) {
                                                                  address:i
                                                                      min:d.minV
                                                                      max:d.maxV
-                                                                     unit:unitForString(d.unit)
-                                                         unitValueStrings:nil
+                                                                    unit:unitForString(d.unit)
+                                                                unitName:nil
+                                                                   flags:(kAudioUnitParameterFlag_IsReadable |
+                                                                          kAudioUnitParameterFlag_IsWritable)
                                                             valueStrings:valueStrings
                                                      dependentParameters:nil];
         p.value = d.defV;
@@ -111,15 +150,34 @@ static AudioUnitParameterUnit unitForString(const char *u) {
         [byGroup[gn] addObject:p];
     }
 
-    NSMutableArray<AUParameterNode *> *groupNodes = [NSMutableArray array];
-    for (NSString *gn in byGroup) {
-        AUParameterGroup *g = [[AUParameterGroup alloc] initWithIdentifier:gn name:gn children:byGroup[gn]];
-        [groupNodes addObject:g];
+    // Read-only meter parameters: hosts (e.g. Logic's generic AU view)
+    // display these as live meters. Updated on the render thread.
+    AUParameter *m[M_MeterCount] = {
+        makeMeterParam(@"meterMomentary",  @"Momentary",   M_Momentary,  -120.f, 24.f),
+        makeMeterParam(@"meterShortTerm",  @"Short-term",  M_ShortTerm,  -120.f, 24.f),
+        makeMeterParam(@"meterIntegrated", @"Integrated",  M_Integrated, -120.f, 24.f),
+        makeMeterParam(@"meterLRA",        @"LRA",         M_LRA,          0.f,  60.f),
+        makeMeterParam(@"meterTruePeak",   @"True peak",   M_TruePeak,  -120.f, 24.f),
+        makeMeterParam(@"meterLimiterGR",  @"Limiter GR",  M_LimiterGR, -60.f,  0.f),
+        makeMeterParam(@"meterMbGR0",      @"MB GR 1",     M_MbGR0,     -60.f,  0.f),
+        makeMeterParam(@"meterMbGR1",      @"MB GR 2",     M_MbGR1,     -60.f,  0.f),
+        makeMeterParam(@"meterMbGR2",      @"MB GR 3",     M_MbGR2,     -60.f,  0.f),
+        makeMeterParam(@"meterMbGR3",      @"MB GR 4",     M_MbGR3,     -60.f,  0.f),
+    };
+    NSMutableArray<AUParameter *> *meterGroup = [NSMutableArray arrayWithCapacity:M_MeterCount];
+    for (int k = 0; k < M_MeterCount; ++k) {
+        _meterParams[k] = m[k];
+        [meterGroup addObject:m[k]];
     }
-    AUParameterGroup *root = [[AUParameterGroup alloc] initWithIdentifier:@"root"
-                                                                     name:@"MasteringAU"
-                                                                  children:groupNodes];
-    self.parameterTree = [AUParameterTree createTreeWithRootNode:root];
+
+    NSMutableArray<AUParameterNode *> *children = [NSMutableArray array];
+    for (NSString *gn in [byGroup.allKeys sortedArrayUsingSelector:@selector(compare:)]) {
+        [children addObject:[AUParameterTree createGroupWithIdentifier:gn name:gn children:byGroup[gn]]];
+    }
+    [children addObject:[AUParameterTree createGroupWithIdentifier:@"Meters"
+                                                              name:@"Meters"
+                                                          children:meterGroup]];
+    self.parameterTree = [AUParameterTree createTreeWithChildren:children];
 
     _flatParams.assign(flat.count, nil);
     for (AUParameter *p in flat) _flatParams[p.address] = p;
@@ -157,77 +215,46 @@ static AudioUnitParameterUnit unitForString(const char *u) {
 #pragma mark - Rendering
 
 - (BOOL)allocateRenderResourcesAndReturnError:(NSError **)outError {
-    AVAudioFormat *outFormat = self.outputBus.format;
-    _sampleRate = outFormat.sampleRate;
+    if (![super allocateRenderResourcesAndReturnError:outError]) return NO;
+
+    AUAudioUnitBus *inBus = self.inputBusses[0];
+    AVAudioFormat *inFormat = inBus.format;
+    _sampleRate = inFormat.sampleRate;
+    _inputChannels = (uint32_t)MIN(2, MAX(1, inFormat.channelCount));
+    _inputInterleaved =
+        !(inFormat.streamDescription->mFormatFlags & kAudioFormatFlagIsNonInterleaved);
     _engine.setSampleRate(_sampleRate);
     _engine.reset();
 
-    const AUAudioFrameCount maxFrames = self.maximumFramesToRender;
+    AUAudioFrameCount maxFrames = self.maximumFramesToRender;
+    if (maxFrames == 0) maxFrames = 4096;
     _inL.assign(maxFrames, 0.0f);
     _inR.assign(maxFrames, 0.0f);
+    _inInter.assign((size_t)maxFrames * 2, 0.0f);
     _outL.assign(maxFrames, 0.0f);
     _outR.assign(maxFrames, 0.0f);
+    _outInter.assign((size_t)maxFrames * 2, 0.0f);
 
+    if (_inputABL) { free(_inputABL); _inputABL = nullptr; }
     _inputABL = (AudioBufferList *)calloc(1, sizeof(AudioBufferList) + 2 * sizeof(AudioBuffer));
-    _inputABL->mNumberBuffers = 2;
-    for (int c = 0; c < 2; ++c) {
-        _inputABL->mBuffers[c].mNumberChannels = 1;
-        _inputABL->mBuffers[c].mDataByteSize = maxFrames * sizeof(float);
-        _inputABL->mBuffers[c].mData = c == 0 ? _inL.data() : _inR.data();
+    if (_inputInterleaved) {
+        _inputABL->mNumberBuffers = 1;
+        _inputABL->mBuffers[0].mNumberChannels = _inputChannels;
+        _inputABL->mBuffers[0].mDataByteSize = maxFrames * _inputChannels * sizeof(float);
+        _inputABL->mBuffers[0].mData = _inInter.data();
+    } else {
+        _inputABL->mNumberBuffers = _inputChannels;
+        for (uint32_t c = 0; c < _inputChannels; ++c) {
+            _inputABL->mBuffers[c].mNumberChannels = 1;
+            _inputABL->mBuffers[c].mDataByteSize = maxFrames * sizeof(float);
+            _inputABL->mBuffers[c].mData = c == 0 ? _inL.data() : _inR.data();
+        }
     }
 
-    __weak MasteringAUAudioUnit *weakSelf = self;
-    self.internalRenderBlock = ^AUAudioUnitStatus(AudioUnitRenderActionFlags *actionFlags,
-                                                  const AudioTimeStamp *timestamp,
-                                                  AUAudioFrameCount frameCount,
-                                                  NSInteger outputBusNumber,
-                                                  AudioBufferList *outputData,
-                                                  const AURenderEvent *realtimeEventListHead) {
-        MasteringAUAudioUnit *strongSelf = weakSelf;
-        if (!strongSelf || outputBusNumber != 0 || frameCount > strongSelf->maximumFramesToRender)
-            return kAudioUnitErr_TooManyFramesToProcess;
-
-        // Pull input from the upstream unit through the input bus.
-        AUAudioUnitBus *inBus = strongSelf.inputBusArray.firstObject;
-        AUAudioUnitStatus status = AudioUnitRender(inBus.audioUnit, actionFlags, timestamp,
-                                                    inBus.index, frameCount, strongSelf->_inputABL);
-        if (status != noErr) {
-            // No upstream connection: silence in, still render (meters run).
-            memset(strongSelf->_inL.data(), 0, frameCount * sizeof(float));
-            memset(strongSelf->_inR.data(), 0, frameCount * sizeof(float));
-        }
-
-        // Push host parameter values into the lock-free engine store.
-        const ParamDesc *descs = paramDescs();
-        for (uint32_t i = 0; i < P_Count; ++i) {
-            AUParameter *p = strongSelf->_flatParams[i];
-            if (p) strongSelf->_engine.store().set(i, p.value);
-        }
-        (void)descs;
-
-        const int channels = (int)inBus.format.channelCount;
-        float *io[2] = {strongSelf->_outL.data(), strongSelf->_outR.data()};
-        // Copy input into out buffers, process in place, copy to outputData.
-        for (AUAudioFrameCount i = 0; i < frameCount; ++i) {
-            strongSelf->_outL[i] = strongSelf->_inL[i];
-            strongSelf->_outR[i] = channels > 1 ? strongSelf->_inR[i] : strongSelf->_inL[i];
-        }
-        strongSelf->_engine.process(io, channels, (int)frameCount);
-
-        for (AUAudioFrameCount i = 0; i < frameCount; ++i) {
-            ((float *)outputData->mBuffers[0].mData)[i] = strongSelf->_outL[i];
-            if (outputData->mNumberBuffers > 1)
-                ((float *)outputData->mBuffers[1].mData)[i] = strongSelf->_outR[i];
-            else if (outputData->mBuffers[0].mNumberChannels == 2) {
-                float *inter = (float *)outputData->mBuffers[0].mData;
-                inter[2 * i] = strongSelf->_outL[i];
-                inter[2 * i + 1] = strongSelf->_outR[i];
-            }
-        }
-
-        [strongSelf updateMeterSnapshot];
-        return noErr;
-    };
+    for (uint32_t i = 0; i < P_Count; ++i) {
+        AUParameter *p = _flatParams[i];
+        if (p) _engine.store().set(i, p.value);
+    }
     return YES;
 }
 
@@ -236,27 +263,112 @@ static AudioUnitParameterUnit unitForString(const char *u) {
     if (_inputABL) { free(_inputABL); _inputABL = nullptr; }
 }
 
-- (void)updateMeterSnapshot {
-    const Meters &m = _engine.meters();
-    NSDictionary *snap = @{
-        @"momentaryLUFS":  @(m.momentaryLUFS),
-        @"shortTermLUFS":  @(m.shortTermLUFS),
-        @"integratedLUFS": @(m.integratedLUFS),
-        @"lraLU":          @(m.loudnessRangeLU),
-        @"truePeakDbTP":   @(m.truePeakDbTP),
-        @"limiterGRDb":    @(m.limiterGRDb),
-        @"mbGR0":          @(m.mbGRDb[0]),
-        @"mbGR1":          @(m.mbGRDb[1]),
-        @"mbGR2":          @(m.mbGRDb[2]),
-        @"mbGR3":          @(m.mbGRDb[3]),
-    };
-    std::lock_guard<std::mutex> lock(_meterMutex);
-    _meterSnapshot = snap;
-}
+- (AUInternalRenderBlock)internalRenderBlock {
+    if (!_renderBlock) {
+        __weak MasteringAUAudioUnit *weakSelf = self;
+        _renderBlock = ^AUAudioUnitStatus(AudioUnitRenderActionFlags *actionFlags,
+                                          const AudioTimeStamp *timestamp,
+                                          AUAudioFrameCount frameCount,
+                                          NSInteger outputBusNumber,
+                                          AudioBufferList *outputData,
+                                          const AURenderEvent *realtimeEventListHead,
+                                          AURenderPullInputBlock pullInputBlock) {
+            MasteringAUAudioUnit *strongSelf = weakSelf;
+            if (!strongSelf || !outputData || outputBusNumber != 0 || !strongSelf->_inputABL)
+                return kAudioUnitErr_Uninitialized;
+            if (frameCount > strongSelf->maximumFramesToRender)
+                return kAudioUnitErr_TooManyFramesToProcess;
+            if (frameCount == 0) return noErr;
 
-- (NSDictionary<NSString *, NSNumber *> *)meterSnapshot {
-    std::lock_guard<std::mutex> lock(_meterMutex);
-    return _meterSnapshot ?: @{};
+            // Pull input from upstream through the input bus.
+            const uint32_t ch = strongSelf->_inputChannels;
+            if (strongSelf->_inputInterleaved) {
+                strongSelf->_inputABL->mBuffers[0].mDataByteSize =
+                    frameCount * ch * sizeof(float);
+            } else {
+                for (uint32_t b = 0; b < ch; ++b)
+                    strongSelf->_inputABL->mBuffers[b].mDataByteSize = frameCount * sizeof(float);
+            }
+            AUAudioUnitStatus inStatus = kAudioUnitErr_Uninitialized;
+            if (pullInputBlock)
+                inStatus = pullInputBlock(actionFlags, timestamp, frameCount, 0,
+                                          strongSelf->_inputABL);
+            if (inStatus != noErr) {
+                memset(strongSelf->_inL.data(), 0, frameCount * sizeof(float));
+                memset(strongSelf->_inR.data(), 0, frameCount * sizeof(float));
+            } else if (strongSelf->_inputInterleaved) {
+                const float *inter = strongSelf->_inInter.data();
+                for (AUAudioFrameCount i = 0; i < frameCount; ++i) {
+                    strongSelf->_inL[i] = inter[i * ch];
+                    strongSelf->_inR[i] = ch > 1 ? inter[i * ch + 1] : inter[i * ch];
+                }
+            } else if (ch == 1) {
+                memcpy(strongSelf->_inR.data(), strongSelf->_inL.data(),
+                       frameCount * sizeof(float));
+            }
+
+            // Push host parameter values into the lock-free engine store.
+            for (uint32_t i = 0; i < P_Count; ++i) {
+                AUParameter *p = strongSelf->_flatParams[i];
+                if (p) strongSelf->_engine.store().set(i, p.value);
+            }
+
+            float *outL = strongSelf->_outL.data();
+            float *outR = strongSelf->_outR.data();
+            memcpy(outL, strongSelf->_inL.data(), frameCount * sizeof(float));
+            memcpy(outR, strongSelf->_inR.data(), frameCount * sizeof(float));
+
+            if (!strongSelf.shouldBypassEffect) {
+                float *io[2] = { outL, outR };
+                strongSelf->_engine.process(io, 2, (int)frameCount);
+
+                const Meters &m = strongSelf->_engine.meters();
+                AUParameter **mp = strongSelf->_meterParams;
+                mp[0]->value = m.momentaryLUFS;
+                mp[1]->value = m.shortTermLUFS;
+                mp[2]->value = m.integratedLUFS;
+                mp[3]->value = m.loudnessRangeLU;
+                mp[4]->value = m.truePeakDbTP;
+                mp[5]->value = m.limiterGRDb;
+                mp[6]->value = m.mbGRDb[0];
+                mp[7]->value = m.mbGRDb[1];
+                mp[8]->value = m.mbGRDb[2];
+                mp[9]->value = m.mbGRDb[3];
+            }
+
+            // Write output, honoring the host-provided buffer layout.
+            const UInt32 nBuf = outputData->mNumberBuffers;
+            for (UInt32 b = 0; b < nBuf; ++b) {
+                AudioBuffer *ab = &outputData->mBuffers[b];
+                if (ab->mNumberChannels <= 1 || nBuf > 1) {
+                    const float *src = (b == 0) ? outL : outR;
+                    if (!ab->mData) {
+                        ab->mData = (void *)src;
+                        ab->mDataByteSize = frameCount * sizeof(float);
+                    } else {
+                        memcpy(ab->mData, src, frameCount * sizeof(float));
+                    }
+                } else {
+                    // Single interleaved buffer with 2+ channels.
+                    const UInt32 nc = ab->mNumberChannels;
+                    float *dst;
+                    if (ab->mData) {
+                        dst = (float *)ab->mData;
+                    } else {
+                        ab->mData = strongSelf->_outInter.data();
+                        ab->mDataByteSize = frameCount * nc * sizeof(float);
+                        dst = strongSelf->_outInter.data();
+                    }
+                    for (AUAudioFrameCount i = 0; i < frameCount; ++i) {
+                        dst[i * nc] = outL[i];
+                        if (nc > 1) dst[i * nc + 1] = outR[i];
+                    }
+                }
+            }
+            return noErr;
+        };
+    }
+    return _renderBlock;
 }
 
 #pragma mark - Capabilities / latency

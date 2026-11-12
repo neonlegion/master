@@ -35,11 +35,11 @@ Source/DSP/       portable DSP core (no Apple deps) — builds/tests anywhere
   Engine.h        the chain, parameter smoothing (5 ms), latency reporting
   Presets.h       factory presets (shared with AU + offline renderer)
 Source/Plugin/    AUv3 wrapper for Logic (macOS-only, needs Xcode)
-  MasteringAU.mm  AUAudioUnit subclass: buses, parameter tree, presets,
-                  internalRenderBlock driving the engine, latency, meter snapshot
-  View/           SwiftUI view extension (AUAudioUnitViewController)
+  MasteringAU.mm  AUAudioUnit subclass: buses, parameter tree (incl. read-only
+                  "Meters" parameters), factory presets, internalRenderBlock
+                  with pullInputBlock driving the engine, latency
   Info.plist      AUv3 component registration (aufx / MstA / Vibe)
-project.yml       XcodeGen spec for the two .appex targets
+project.yml       XcodeGen spec for the .appex target
 Tests/test_main.cpp  738-check DSP test suite (runs on Linux)
 Tools/            offline_render: master a WAV with a factory preset
 CMakeLists.txt    builds dsp_tests + offline_render on any platform
@@ -85,11 +85,17 @@ here — 738 checks; the thin AU adapter follows Apple's documented AUv3
 patterns and should be compile-checked on first Xcode build):
 
 ```
-brew install xcodegen        # or download from GitHub
-xcodegen generate
+xcodegen generate            # Ventura: download the XcodeGen 2.42.0 release
+                             # zip, `sudo mv` the bin/ + share/ folders into
+                             # /usr/local (Homebrew no longer supports 13.x)
 open MasteringAU.xcodeproj
-# Product ▸ Build (target MasteringAU, then MasteringAUView)
+# Product ▸ Build (target MasteringAU, scheme MasteringAU), then Product ▸
+# Archive-free install: copy the built .appex (see below)
 ```
+
+Logic renders the parameter tree in its generic AU view; the read-only
+**Meters** parameter group (momentary/short-term/integrated LUFS, LRA,
+true peak, limiter and per-band GR) shows live levels.
 
 Install and rescan:
 

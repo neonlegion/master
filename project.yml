@@ -1,19 +1,20 @@
 # XcodeGen project spec — run `xcodegen generate` on macOS, then open and build.
-# The AUv3 audio-unit extension and its SwiftUI view extension are app
-# extensions (.appex); install the audio appex to
+# The AUv3 audio-unit extension is an app extension (.appex); install it to
 # ~/Library/Audio/AudioUnits/Components and rescan (restart Logic or `auval -a`).
+# Logic renders the parameter tree (groups, names, units, value strings) in its
+# generic AU view; the read-only "Meters" parameter group shows live levels.
 name: MasteringAU
 options:
   bundleIdPrefix: com.vibe
   deploymentTarget:
-    macOS: "12.0"
+    macOS: "13.0"
 settings:
   base:
     SDKROOT: macosx
     CODE_SIGN_IDENTITY: "-"
     CODE_SIGNING_REQUIRED: NO
-    SWIFT_VERSION: 5.0
     CLANG_ENABLE_MODULES: YES
+    CLANG_CXX_LANGUAGE_STANDARD: c++17
     GCC_OPTIMIZATION_LEVEL: 2
 
 targets:
@@ -24,34 +25,12 @@ targets:
     bundleId: com.vibe.MasteringAU
     sources:
       - path: Source/Plugin/MasteringAU.mm
-      - path: Source/Plugin/Info.plist
     settings:
       base:
         PRODUCT_BUNDLE_PACKAGE_TYPE: XPC!
         WRAPPER_EXTENSION: appex
+        SKIP_INSTALL: YES
         INFOPLIST_FILE: Source/Plugin/Info.plist
         CODE_SIGN_ENTITLEMENTS: Source/Plugin/entitlements.plist
         GENERATE_INFOPLIST_FILE: NO
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks @executable_path/Frameworks"
-    dependencies: []
-
-  MasteringAUView:
-    type: app-extension
-    platform: macOS
-    productName: MasteringAUView
-    bundleId: com.vibe.MasteringAUView
-    sources:
-      - path: Source/Plugin/View/MasteringViewController.swift
-      - path: Source/Plugin/View/MasteringView.swift
-      - path: Source/Plugin/View/Info.plist
-    settings:
-      base:
-        PRODUCT_BUNDLE_PACKAGE_TYPE: XPC!
-        WRAPPER_EXTENSION: appex
-        INFOPLIST_FILE: Source/Plugin/View/Info.plist
-        CODE_SIGN_ENTITLEMENTS: Source/Plugin/entitlements.plist
-        GENERATE_INFOPLIST_FILE: NO
-        SWIFT_OBJC_BRIDGING_HEADER: Source/Plugin/MasteringAU-Bridging-Header.h
-        HEADER_SEARCH_PATHS: "$(inherited) Source/Plugin"
-    dependencies:
-      - target: MasteringAU
