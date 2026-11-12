@@ -24,6 +24,8 @@ targets:
     bundleId: com.vibe.MasteringAU
     sources:
       - path: Source/Plugin/MasteringAU.mm
+      - path: Source/Plugin/MasteringAU.h
+      - path: Source/Plugin/MasteringAU-Bridging-Header.h
       - path: Source/Plugin/Info.plist
     settings:
       base:
@@ -31,7 +33,6 @@ targets:
         WRAPPER_EXTENSION: appex
         INFOPLIST_FILE: Source/Plugin/Info.plist
         CODE_SIGN_ENTITLEMENTS: Source/Plugin/entitlements.plist
-        PRODUCT_TYPE: com.apple.product-type.auv3
         GENERATE_INFOPLIST_FILE: NO
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks @executable_path/Frameworks"
     dependencies: []
@@ -45,6 +46,7 @@ targets:
       - path: Source/Plugin/View/MasteringViewController.swift
       - path: Source/Plugin/View/MasteringView.swift
       - path: Source/Plugin/View/Info.plist
+      - path: Source/Plugin/MasteringAU.h
     settings:
       base:
         PRODUCT_BUNDLE_PACKAGE_TYPE: XPC!
@@ -53,5 +55,6 @@ targets:
         CODE_SIGN_ENTITLEMENTS: Source/Plugin/entitlements.plist
         GENERATE_INFOPLIST_FILE: NO
         SWIFT_OBJC_BRIDGING_HEADER: Source/Plugin/MasteringAU-Bridging-Header.h
+        HEADER_SEARCH_PATHS: "$(inherited) Source/Plugin"
     dependencies:
       - target: MasteringAU

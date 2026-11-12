@@ -1,6 +1,20 @@
-#import <AudioToolbox/AudioToolbox.h>
-#import <AVFAudio/AVFAudio.h>
 #import <Foundation/Foundation.h>
+#import <AVFAudio/AVFAudio.h>
+// AUv3 Obj-C API (AUAudioUnit, AUAudioUnitFactory, AUParameterTree, ...) lives in
+// the AudioUnit framework on current SDKs; AudioToolbox/AudioToolboxCore on older
+// ones. Import whichever is present. AudioUnit/AudioUnit.h also provides the C API
+// (AudioComponentDescription, AudioUnitRender, kAudioUnitType_Effect, ...).
+#if __has_include(<AudioUnit/AUAudioUnit.h>)
+#import <AudioUnit/AUAudioUnit.h>
+#else
+#import <AudioUnit/AudioUnit.h>
+#endif
+#import <AudioToolbox/AudioToolbox.h>
+#if __has_include(<AudioToolboxCore/AudioToolboxCore.h>)
+#import <AudioToolboxCore/AudioToolboxCore.h>
+#elif __has_include(<AudioToolboxCore/AUAudioUnit.h>)
+#import <AudioToolboxCore/AUAudioUnit.h>
+#endif
 
 NS_ASSUME_NONNULL_BEGIN
 

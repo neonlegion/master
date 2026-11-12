@@ -2,6 +2,7 @@
 
 #include "../DSP/Engine.h"
 #include "../DSP/Presets.h"
+#include <cstring>
 #include <mutex>
 #include <vector>
 
