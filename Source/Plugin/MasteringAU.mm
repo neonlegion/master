@@ -56,14 +56,17 @@ enum {
     AUInternalRenderBlock _renderBlock;
     std::vector<AUParameter *> _flatParams; // index == AUParameterAddress == ParamId
     AUParameter *_meterParams[M_MeterCount];
+    NSArray<AUAudioUnitPreset *> *_factoryPresets;
     AudioBufferList *_inputABL;
     std::vector<float> _inL, _inR, _inInter, _outL, _outR, _outInter;
     uint32_t _inputChannels;
     bool _inputInterleaved;
     double _sampleRate;
 }
-// factoryPresets is readonly in the public header; redeclare readwrite here.
-@property (nonatomic, readwrite, copy) NSArray<AUAudioUnitPreset *> *factoryPresets;
+// factoryPresets is readonly in the public header; back it with our own ivar
+// and override the accessors (a readwrite redeclaration would just warn).
+- (NSArray<AUAudioUnitPreset *> *)factoryPresets;
+- (void)setFactoryPresets:(NSArray<AUAudioUnitPreset *> *)presets;
 @end
 
 @implementation MasteringAUAudioUnitFactory
@@ -74,6 +77,9 @@ enum {
 @end
 
 @implementation MasteringAUAudioUnit
+
+- (NSArray<AUAudioUnitPreset *> *)factoryPresets { return _factoryPresets; }
+- (void)setFactoryPresets:(NSArray<AUAudioUnitPreset *> *)presets { _factoryPresets = [presets copy]; }
 
 - (instancetype)initWithComponentDescription:(AudioComponentDescription)desc
                                      options:(AudioComponentInstantiationOptions)options
@@ -302,7 +308,7 @@ static AUParameter *makeMeterParam(NSString *identifier, NSString *name,
             MasteringAUAudioUnit *strongSelf = weakSelf;
             if (!strongSelf || !outputData || outputBusNumber != 0 || !strongSelf->_inputABL)
                 return kAudioUnitErr_Uninitialized;
-            if (frameCount > strongSelf->maximumFramesToRender)
+            if (frameCount > strongSelf.maximumFramesToRender)
                 return kAudioUnitErr_TooManyFramesToProcess;
             if (frameCount == 0) return noErr;
 
@@ -350,16 +356,16 @@ static AUParameter *makeMeterParam(NSString *identifier, NSString *name,
 
                 const Meters &m = strongSelf->_engine.meters();
                 AUParameter **mp = strongSelf->_meterParams;
-                mp[0]->value = m.momentaryLUFS;
-                mp[1]->value = m.shortTermLUFS;
-                mp[2]->value = m.integratedLUFS;
-                mp[3]->value = m.loudnessRangeLU;
-                mp[4]->value = m.truePeakDbTP;
-                mp[5]->value = m.limiterGRDb;
-                mp[6]->value = m.mbGRDb[0];
-                mp[7]->value = m.mbGRDb[1];
-                mp[8]->value = m.mbGRDb[2];
-                mp[9]->value = m.mbGRDb[3];
+                mp[0].value = m.momentaryLUFS;
+                mp[1].value = m.shortTermLUFS;
+                mp[2].value = m.integratedLUFS;
+                mp[3].value = m.loudnessRangeLU;
+                mp[4].value = m.truePeakDbTP;
+                mp[5].value = m.limiterGRDb;
+                mp[6].value = m.mbGRDb[0];
+                mp[7].value = m.mbGRDb[1];
+                mp[8].value = m.mbGRDb[2];
+                mp[9].value = m.mbGRDb[3];
             }
 
             // Write output, honoring the host-provided buffer layout.
