@@ -355,7 +355,7 @@ static AUParameter *makeMeterParam(NSString *identifier, NSString *name,
                 strongSelf->_engine.process(io, 2, (int)frameCount);
 
                 const Meters &m = strongSelf->_engine.meters();
-                AUParameter **mp = strongSelf->_meterParams;
+                AUParameter *__strong *mp = strongSelf->_meterParams;
                 mp[0].value = m.momentaryLUFS;
                 mp[1].value = m.shortTermLUFS;
                 mp[2].value = m.integratedLUFS;
