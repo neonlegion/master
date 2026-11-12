@@ -1,4 +1,29 @@
-#import "MasteringAU.h"
+// Self-contained AUv3 adapter: the ObjC class declarations live directly in
+// this .mm (importing a local .h with ObjC declarations from a .mm derails
+// clang's ObjC parsing on some Xcode 15.2 / Ventura setups, so no .h here).
+#import <Foundation/Foundation.h>
+#import <AVFAudio/AVFAudio.h>
+// AudioToolbox.h umbrella includes AUAudioUnit, AUAudioUnitImplementation
+// (factory protocol, bus init, parameter-tree factory methods), AUParameters,
+// AudioComponent, AudioUnitProperties.
+#import <AudioToolbox/AudioToolbox.h>
+
+NS_ASSUME_NONNULL_BEGIN
+
+// The entire audio path lives in the portable, unit-tested C++ engine
+// (Source/DSP/Engine.h); this class is a thin AUv3 adapter: buses,
+// parameter tree (including read-only meter parameters), factory presets,
+// and latency reporting.
+@objc(MasteringAUAudioUnit)
+@interface MasteringAUAudioUnit : AUAudioUnit
+@end
+
+// NSExtension principal class: the host instantiates this and asks it for
+// the AUAudioUnit via createAudioUnitWithComponentDescription:error:.
+@interface MasteringAUAudioUnitFactory : NSObject <AUAudioUnitFactory>
+@end
+
+NS_ASSUME_NONNULL_END
 
 #include "../DSP/Engine.h"
 #include "../DSP/Presets.h"
