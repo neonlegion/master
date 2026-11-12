@@ -13,8 +13,9 @@ NS_ASSUME_NONNULL_BEGIN
 // The entire audio path lives in the portable, unit-tested C++ engine
 // (Source/DSP/Engine.h); this class is a thin AUv3 adapter: buses,
 // parameter tree (including read-only meter parameters), factory presets,
-// and latency reporting.
-@objc(MasteringAUAudioUnit)
+// and latency reporting. (No @objc(name) attribute: with the parenthesized
+// name this clang 15 build rejects the token in ObjC++ files; the class name
+// already matches, so the attribute is unnecessary.)
 @interface MasteringAUAudioUnit : AUAudioUnit
 @end
 
