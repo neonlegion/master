@@ -15,6 +15,11 @@ settings:
     CODE_SIGNING_REQUIRED: NO
     CLANG_ENABLE_MODULES: YES
     CLANG_CXX_LANGUAGE_STANDARD: c++17
+    # Force -std=c++17 on every C++/ObjC++ compile; OTHER_*FLAGS are appended
+    # last on the clang command line, so this wins even if the language-standard
+    # setting is not resolved as expected (XcodeGen's base preset is gnu++14 and
+    # the clang 15 default is gnu++98, which breaks libc++'s <new>).
+    OTHER_CPLUSPLUSFLAGS: "-std=c++17"
     GCC_OPTIMIZATION_LEVEL: 2
 
 targets:
@@ -25,6 +30,7 @@ targets:
     bundleId: com.vibe.MasteringAU
     sources:
       - path: Source/Plugin/MasteringAU.mm
+        compiler-flags: "-std=c++17"
     settings:
       base:
         PRODUCT_BUNDLE_PACKAGE_TYPE: XPC!
@@ -34,4 +40,5 @@ targets:
         CODE_SIGN_ENTITLEMENTS: Source/Plugin/entitlements.plist
         GENERATE_INFOPLIST_FILE: NO
         CLANG_CXX_LANGUAGE_STANDARD: c++17
+        OTHER_CPLUSPLUSFLAGS: "-std=c++17"
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks @executable_path/Frameworks"
