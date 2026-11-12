@@ -1,5 +1,9 @@
 #pragma once
 
+#if !defined(__cplusplus) || __cplusplus < 201703L
+#error "MasteringAU requires C++17: set CLANG_CXX_LANGUAGE_STANDARD = c++17 (project.yml already does - regenerate the Xcode project with `xcodegen generate` after `git pull`)"
+#endif
+
 #include <cstdint>
 #include <cstddef>
 #include <cmath>

@@ -1,3 +1,8 @@
+// Guarded with __OBJC__ so the file is a harmless empty translation unit if a
+// stale/wrong Xcode project ever lists this header in Compile Sources (it
+// would then be compiled as plain C, where '@' is a syntax error).
+#ifdef __OBJC__
+
 #import <Foundation/Foundation.h>
 #import <AVFAudio/AVFAudio.h>
 // The AudioToolbox umbrella pulls in the full AUv3 API: AUAudioUnit,
@@ -26,3 +31,5 @@ NS_ASSUME_NONNULL_BEGIN
 @end
 
 NS_ASSUME_NONNULL_END
+
+#endif // __OBJC__
