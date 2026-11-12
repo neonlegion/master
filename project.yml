@@ -17,6 +17,7 @@ settings:
     CODE_SIGNING_REQUIRED: YES
     CODE_SIGN_STYLE: Manual
     CLANG_ENABLE_MODULES: YES
+    SWIFT_VERSION: 5.0
     CLANG_CXX_LANGUAGE_STANDARD: c++17
     # Force -std=c++17 on every C++/ObjC++ compile; OTHER_*FLAGS are appended
     # last on the clang command line, so this wins even if the language-standard
@@ -53,3 +54,21 @@ targets:
         OTHER_CPLUSPLUSFLAGS: "-std=c++17"
         OTHER_LDFLAGS: "-framework Foundation -framework AVFAudio -framework AudioToolbox"
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks @executable_path/Frameworks"
+
+  # Minimal host app: embeds MasteringAU.appex in Contents/PlugIns. Launching
+  # this app registers the AUv3 extension with PluginKit, after which auval
+  # and Logic Pro can see the audio unit. (A bare .appex in a Components dir
+  # is NOT registered on modern macOS.)
+  MasteringAUHost:
+    type: application
+    platform: macOS
+    productName: MasteringAUHost
+    bundleId: com.vibe.MasteringAUHost
+    sources:
+      - path: Source/Host/main.swift
+    dependencies:
+      - target: MasteringAU
+    settings:
+      base:
+        INFOPLIST_FILE: Source/Host/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
