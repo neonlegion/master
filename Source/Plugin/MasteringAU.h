@@ -10,9 +10,9 @@
 // parameter-tree factory methods), AUParameters, AudioComponent,
 // AudioUnitProperties (parameter flags, error codes, ...).
 #import <AudioToolbox/AudioToolbox.h>
-#if __has_include(<AudioToolboxCore/AUAudioUnitImplementation.h>)
-#import <AudioToolboxCore/AUAudioUnitImplementation.h>
-#endif
+// (AudioToolbox.h's umbrella already includes AUAudioUnitImplementation.h;
+// do NOT import <AudioToolboxCore/...> directly — on the macOS SDK that
+// header derails ObjC++ parsing of the rest of this file.)
 
 NS_ASSUME_NONNULL_BEGIN
 
