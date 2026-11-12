@@ -48,10 +48,10 @@ targets:
         WRAPPER_EXTENSION: appex
         SKIP_INSTALL: YES
         INFOPLIST_FILE: Source/Plugin/Info.plist
-        # No CODE_SIGN_ENTITLEMENTS: an ad-hoc-signed app-sandboxed appex cannot
-        # be launched by hosts on macOS (sandbox needs a real signature chain),
-        # which makes the registrar report the component as missing. AUv3 does
-        # not need the sandbox for local use.
+        # pkd (PlugInKit) refuses to register an appex whose signature lacks
+        # the app-sandbox entitlement ("plug-ins must be sandboxed"); ad-hoc
+        # signing with entitlements registers fine on macOS.
+        CODE_SIGN_ENTITLEMENTS: Source/Plugin/entitlements.plist
         GENERATE_INFOPLIST_FILE: NO
         CLANG_CXX_LANGUAGE_STANDARD: c++17
         OTHER_CPLUSPLUSFLAGS: "-std=c++17"
@@ -75,4 +75,5 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.vibe.MasteringAUHost
         INFOPLIST_FILE: Source/Host/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Source/Host/entitlements.plist
         GENERATE_INFOPLIST_FILE: NO
