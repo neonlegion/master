@@ -31,10 +31,10 @@ targets:
     sources:
       - path: Source/Plugin/MasteringAU.mm
         compiler-flags: "-std=c++17"
-    frameworks:
-      - Foundation.framework
-      - AVFAudio.framework
-      - AudioToolbox.framework
+    dependencies:
+      - sdk: Foundation.framework
+      - sdk: AVFAudio.framework
+      - sdk: AudioToolbox.framework
     settings:
       base:
         PRODUCT_BUNDLE_PACKAGE_TYPE: XPC!
@@ -45,4 +45,5 @@ targets:
         GENERATE_INFOPLIST_FILE: NO
         CLANG_CXX_LANGUAGE_STANDARD: c++17
         OTHER_CPLUSPLUSFLAGS: "-std=c++17"
+        OTHER_LDFLAGS: "-framework Foundation -framework AVFAudio -framework AudioToolbox"
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks @executable_path/Frameworks"
