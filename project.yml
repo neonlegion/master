@@ -44,7 +44,10 @@ targets:
         WRAPPER_EXTENSION: appex
         SKIP_INSTALL: YES
         INFOPLIST_FILE: Source/Plugin/Info.plist
-        CODE_SIGN_ENTITLEMENTS: Source/Plugin/entitlements.plist
+        # No CODE_SIGN_ENTITLEMENTS: an ad-hoc-signed app-sandboxed appex cannot
+        # be launched by hosts on macOS (sandbox needs a real signature chain),
+        # which makes the registrar report the component as missing. AUv3 does
+        # not need the sandbox for local use.
         GENERATE_INFOPLIST_FILE: NO
         CLANG_CXX_LANGUAGE_STANDARD: c++17
         OTHER_CPLUSPLUSFLAGS: "-std=c++17"
