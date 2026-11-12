@@ -11,8 +11,11 @@ options:
 settings:
   base:
     SDKROOT: macosx
+    # Ad-hoc sign ("-"): required so AudioComponentRegistrar accepts the appex
+    # without needing an Apple Developer team.
     CODE_SIGN_IDENTITY: "-"
-    CODE_SIGNING_REQUIRED: NO
+    CODE_SIGNING_REQUIRED: YES
+    CODE_SIGN_STYLE: Manual
     CLANG_ENABLE_MODULES: YES
     CLANG_CXX_LANGUAGE_STANDARD: c++17
     # Force -std=c++17 on every C++/ObjC++ compile; OTHER_*FLAGS are appended
