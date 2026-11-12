@@ -31,7 +31,9 @@ targets:
     type: app-extension
     platform: macOS
     productName: MasteringAU
-    bundleId: com.vibe.MasteringAU
+    # Must be prefixed with the host app's bundle id (com.vibe.MasteringAUHost),
+    # otherwise embedding fails ValidateEmbeddedBinary and pluginkit rejects it.
+    bundleId: com.vibe.MasteringAUHost.MasteringAU
     sources:
       - path: Source/Plugin/MasteringAU.mm
         compiler-flags: "-std=c++17"
