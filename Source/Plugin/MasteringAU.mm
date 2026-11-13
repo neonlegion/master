@@ -158,15 +158,14 @@ static AUParameter *makeMeterParam(NSString *identifier, NSString *name,
 - (void)buildParameterTree {
     const ParamDesc *descs = paramDescs();
     NSMutableArray<AUParameter *> *flat = [NSMutableArray arrayWithCapacity:P_Count];
-    NSMutableDictionary<NSString *, NSMutableArray<AUParameter *> *> *byGroup =
-        [NSMutableDictionary dictionary];
+    NSMutableArray<AUParameterNode *> *children = [NSMutableArray array];
 
     for (uint32_t i = 0; i < P_Count; ++i) {
         const ParamDesc &d = descs[i];
         NSString *identifier = [NSString stringWithUTF8String:d.id];
         NSString *name = [NSString stringWithUTF8String:d.name];
         NSArray<NSString *> *valueStrings = nil;
-        if (d.choices) {
+        if (d.choices && strcmp(d.unit, "bool") != 0) {
             NSMutableArray *vs = [NSMutableArray arrayWithCapacity:(NSUInteger)d.numChoices];
             for (int c = 0; c < d.numChoices; ++c) {
                 NSString *cs = [NSString stringWithUTF8String:d.choices[c]];
@@ -193,43 +192,9 @@ static AUParameter *makeMeterParam(NSString *identifier, NSString *name,
         }
         p.value = d.defV;
         [flat addObject:p];
-        NSString *gn = [NSString stringWithUTF8String:d.group];
-        if (!gn) gn = @"Main";
-        if (!byGroup[gn]) byGroup[gn] = [NSMutableArray array];
-        [byGroup[gn] addObject:p];
+        [children addObject:p];
     }
 
-    // Read-only meter parameters: hosts (e.g. Logic's generic AU view)
-    // display these as live meters. Updated on the render thread.
-    AUParameter *m[M_MeterCount] = {
-        makeMeterParam(@"meterMomentary",  @"Momentary",   M_Momentary,  -120.f, 24.f),
-        makeMeterParam(@"meterShortTerm",  @"Short-term",  M_ShortTerm,  -120.f, 24.f),
-        makeMeterParam(@"meterIntegrated", @"Integrated",  M_Integrated, -120.f, 24.f),
-        makeMeterParam(@"meterLRA",        @"LRA",         M_LRA,          0.f,  60.f),
-        makeMeterParam(@"meterTruePeak",   @"True peak",   M_TruePeak,  -120.f, 24.f),
-        makeMeterParam(@"meterLimiterGR",  @"Limiter GR",  M_LimiterGR, -60.f,  0.f),
-        makeMeterParam(@"meterMbGR0",      @"MB GR 1",     M_MbGR0,     -60.f,  0.f),
-        makeMeterParam(@"meterMbGR1",      @"MB GR 2",     M_MbGR1,     -60.f,  0.f),
-        makeMeterParam(@"meterMbGR2",      @"MB GR 3",     M_MbGR2,     -60.f,  0.f),
-        makeMeterParam(@"meterMbGR3",      @"MB GR 4",     M_MbGR3,     -60.f,  0.f),
-    };
-    NSMutableArray<AUParameter *> *meterGroup = [NSMutableArray arrayWithCapacity:M_MeterCount];
-    for (int k = 0; k < M_MeterCount; ++k) {
-        _meterParams[k] = m[k];
-        if (m[k]) [meterGroup addObject:m[k]];
-    }
-
-    NSMutableArray<AUParameterNode *> *children = [NSMutableArray array];
-    for (NSString *gn in [byGroup.allKeys sortedArrayUsingSelector:@selector(compare:)]) {
-        AUParameterNode *g = [AUParameterTree createGroupWithIdentifier:gn name:gn children:byGroup[gn]];
-        if (g) [children addObject:g];
-        else NSLog(@"[MasteringAU] group creation returned nil: %@", gn);
-    }
-    AUParameterNode *mg = [AUParameterTree createGroupWithIdentifier:@"Meters"
-                                                                 name:@"Meters"
-                                                             children:meterGroup];
-    if (mg) [children addObject:mg];
-    else NSLog(@"[MasteringAU] Meters group creation returned nil");
     AUParameterTree *tree = [AUParameterTree createTreeWithChildren:children];
     if (!tree) NSLog(@"[MasteringAU] parameter tree creation returned nil (%lu children)", (unsigned long)children.count);
     self.parameterTree = tree;
@@ -389,6 +354,19 @@ static AUParameter *makeMeterParam(NSString *identifier, NSString *name,
                 mp[7].value = m.mbGRDb[1];
                 mp[8].value = m.mbGRDb[2];
                 mp[9].value = m.mbGRDb[3];
+            }
+
+            static BOOL gOnce = NO;
+            if (!gOnce) {
+                gOnce = YES;
+                float mx = 0.f;
+                for (AUAudioFrameCount i = 0; i < frameCount; ++i) {
+                    float a = outL[i] < 0 ? -outL[i] : outL[i];
+                    if (a > mx) mx = a;
+                }
+                NSLog(@"[MasteringAU] render frames=%u ch=%u inter=%d pull=%d bypass=%d maxOut=%f",
+                      (unsigned)frameCount, ch, (int)strongSelf->_inputInterleaved, (int)inStatus,
+                      (int)strongSelf.shouldBypassEffect, (double)mx);
             }
 
             // Write output, honoring the host-provided buffer layout.
