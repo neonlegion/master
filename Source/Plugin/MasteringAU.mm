@@ -133,7 +133,8 @@ static AudioUnitParameterUnit unitForString(const char *u) {
     if (!strcmp(u, "ms"))   return kAudioUnitParameterUnit_Milliseconds;
     if (!strcmp(u, "%"))    return kAudioUnitParameterUnit_Percent;
     if (!strcmp(u, "bool")) return kAudioUnitParameterUnit_Boolean;
-    return kAudioUnitParameterUnit_Indexed;
+    if (!strcmp(u, "index")) return kAudioUnitParameterUnit_Indexed;
+    return kAudioUnitParameterUnit_Generic;
 }
 
 static AUParameter *makeMeterParam(NSString *identifier, NSString *name,
