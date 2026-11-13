@@ -361,16 +361,27 @@ static AUParameter *makeMeterParam(NSString *identifier, NSString *name,
             static int gProbe = 0;
             gProbe++;
             if (gProbe <= 10 || gProbe % 200 == 0) {
-                float mIn = 0.f, mOut = 0.f;
+                float mIn = 0.f, mOut = 0.f, mPre = 0.f;
                 for (AUAudioFrameCount i = 0; i < frameCount; ++i) {
                     float a = strongSelf->_inL[i] < 0 ? -strongSelf->_inL[i] : strongSelf->_inL[i];
                     if (a > mIn) mIn = a;
                     float b = outL[i] < 0 ? -outL[i] : outL[i];
                     if (b > mOut) mOut = b;
                 }
-                NSLog(@"[MasteringAU] render#%d frames=%u ch=%u inter=%d pull=%d bypass=%d maxIn=%f maxOut=%f buf0=%p inL=%p same=%d outBufs=%u outData=%p",
+                for (UInt32 b = 0; b < outputData->mNumberBuffers; ++b) {
+                    AudioBuffer *ab = &outputData->mBuffers[b];
+                    if (ab->mData) {
+                        const float *fd = (const float *)ab->mData;
+                        UInt32 n = frameCount * ab->mNumberChannels;
+                        for (UInt32 i = 0; i < n; ++i) {
+                            float a = fd[i] < 0 ? -fd[i] : fd[i];
+                            if (a > mPre) mPre = a;
+                        }
+                    }
+                }
+                NSLog(@"[MasteringAU] render#%d frames=%u ch=%u inter=%d pull=%d bypass=%d maxIn=%f maxOut=%f maxPre=%f buf0=%p inL=%p same=%d outBufs=%u outData=%p",
                       gProbe, (unsigned)frameCount, ch, (int)strongSelf->_inputInterleaved, (int)inStatus,
-                      (int)strongSelf.shouldBypassEffect, (double)mIn, (double)mOut,
+                      (int)strongSelf.shouldBypassEffect, (double)mIn, (double)mOut, (double)mPre,
                       strongSelf->_inputABL->mBuffers[0].mData, (void *)strongSelf->_inL.data(),
                       (int)(strongSelf->_inputABL->mBuffers[0].mData == (void *)strongSelf->_inL.data()),
                       outputData->mNumberBuffers, (void *)outputData);
