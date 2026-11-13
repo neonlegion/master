@@ -243,6 +243,8 @@ static AUParameter *makeMeterParam(NSString *identifier, NSString *name,
     _inputChannels = (uint32_t)MIN(2, MAX(1, inFormat.channelCount));
     _inputInterleaved =
         !(inFormat.streamDescription->mFormatFlags & kAudioFormatFlagIsNonInterleaved);
+    NSLog(@"[MasteringAU] allocate sr=%f ch=%u inter=%d maxFrames=%u",
+          _sampleRate, _inputChannels, (int)_inputInterleaved, (unsigned)self.maximumFramesToRender);
     _engine.setSampleRate(_sampleRate);
     _engine.reset();
 
@@ -366,9 +368,12 @@ static AUParameter *makeMeterParam(NSString *identifier, NSString *name,
                     float b = outL[i] < 0 ? -outL[i] : outL[i];
                     if (b > mOut) mOut = b;
                 }
-                NSLog(@"[MasteringAU] render#%d frames=%u ch=%u inter=%d pull=%d bypass=%d maxIn=%f maxOut=%f",
+                NSLog(@"[MasteringAU] render#%d frames=%u ch=%u inter=%d pull=%d bypass=%d maxIn=%f maxOut=%f buf0=%p inL=%p same=%d outBufs=%u outData=%p",
                       gProbe, (unsigned)frameCount, ch, (int)strongSelf->_inputInterleaved, (int)inStatus,
-                      (int)strongSelf.shouldBypassEffect, (double)mIn, (double)mOut);
+                      (int)strongSelf.shouldBypassEffect, (double)mIn, (double)mOut,
+                      strongSelf->_inputABL->mBuffers[0].mData, (void *)strongSelf->_inL.data(),
+                      (int)(strongSelf->_inputABL->mBuffers[0].mData == (void *)strongSelf->_inL.data()),
+                      outputData->mNumberBuffers, (void *)outputData);
             }
 
             // Write output, honoring the host-provided buffer layout.
