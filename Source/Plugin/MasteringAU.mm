@@ -429,7 +429,8 @@ static AUParameter *makeMeterParam(NSString *identifier, NSString *name,
 #pragma mark - Capabilities / latency
 
 - (NSArray<NSNumber *> *)channelCapabilities {
-    return @[@1, @2]; // mono + stereo
+    // Flattened (input, output) channel-count pairs: mono->mono, stereo->stereo.
+    return @[@1, @1, @2, @2];
 }
 
 - (BOOL)canProcessInPlace {
