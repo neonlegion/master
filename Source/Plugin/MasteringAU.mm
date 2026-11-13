@@ -150,7 +150,8 @@ static AUParameter *makeMeterParam(NSString *identifier, NSString *name,
                                                                       kAudioUnitParameterFlag_MeterReadOnly)
                                                         valueStrings:nil
                                                  dependentParameters:nil];
-    p.value = minV;
+    if (!p) NSLog(@"[MasteringAU] meter param creation returned nil: %@", identifier);
+    else p.value = minV;
     return p;
 }
 
@@ -167,8 +168,11 @@ static AUParameter *makeMeterParam(NSString *identifier, NSString *name,
         NSArray<NSString *> *valueStrings = nil;
         if (d.choices) {
             NSMutableArray *vs = [NSMutableArray arrayWithCapacity:(NSUInteger)d.numChoices];
-            for (int c = 0; c < d.numChoices; ++c)
-                [vs addObject:[NSString stringWithUTF8String:d.choices[c]]];
+            for (int c = 0; c < d.numChoices; ++c) {
+                NSString *cs = [NSString stringWithUTF8String:d.choices[c]];
+                if (cs) [vs addObject:cs];
+                else NSLog(@"[MasteringAU] nil choice string %d for %s", c, d.id);
+            }
             valueStrings = vs;
         }
         AUParameter *p = [AUParameterTree createParameterWithIdentifier:identifier
@@ -182,9 +186,15 @@ static AUParameter *makeMeterParam(NSString *identifier, NSString *name,
                                                                           kAudioUnitParameterFlag_IsWritable)
                                                             valueStrings:valueStrings
                                                      dependentParameters:nil];
+        if (!p) {
+            NSLog(@"[MasteringAU] param creation returned nil: id=%s unit=%s min=%f max=%f choices=%d",
+                  d.id, d.unit, (double)d.minV, (double)d.maxV, d.numChoices);
+            continue;
+        }
         p.value = d.defV;
         [flat addObject:p];
         NSString *gn = [NSString stringWithUTF8String:d.group];
+        if (!gn) gn = @"Main";
         if (!byGroup[gn]) byGroup[gn] = [NSMutableArray array];
         [byGroup[gn] addObject:p];
     }
@@ -206,17 +216,23 @@ static AUParameter *makeMeterParam(NSString *identifier, NSString *name,
     NSMutableArray<AUParameter *> *meterGroup = [NSMutableArray arrayWithCapacity:M_MeterCount];
     for (int k = 0; k < M_MeterCount; ++k) {
         _meterParams[k] = m[k];
-        [meterGroup addObject:m[k]];
+        if (m[k]) [meterGroup addObject:m[k]];
     }
 
     NSMutableArray<AUParameterNode *> *children = [NSMutableArray array];
     for (NSString *gn in [byGroup.allKeys sortedArrayUsingSelector:@selector(compare:)]) {
-        [children addObject:[AUParameterTree createGroupWithIdentifier:gn name:gn children:byGroup[gn]]];
+        AUParameterNode *g = [AUParameterTree createGroupWithIdentifier:gn name:gn children:byGroup[gn]];
+        if (g) [children addObject:g];
+        else NSLog(@"[MasteringAU] group creation returned nil: %@", gn);
     }
-    [children addObject:[AUParameterTree createGroupWithIdentifier:@"Meters"
-                                                              name:@"Meters"
-                                                          children:meterGroup]];
-    self.parameterTree = [AUParameterTree createTreeWithChildren:children];
+    AUParameterNode *mg = [AUParameterTree createGroupWithIdentifier:@"Meters"
+                                                                 name:@"Meters"
+                                                             children:meterGroup];
+    if (mg) [children addObject:mg];
+    else NSLog(@"[MasteringAU] Meters group creation returned nil");
+    AUParameterTree *tree = [AUParameterTree createTreeWithChildren:children];
+    if (!tree) NSLog(@"[MasteringAU] parameter tree creation returned nil (%lu children)", (unsigned long)children.count);
+    self.parameterTree = tree;
 
     _flatParams.assign(flat.count, nil);
     for (AUParameter *p in flat) _flatParams[p.address] = p;
