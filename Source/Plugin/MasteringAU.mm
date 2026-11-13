@@ -356,17 +356,19 @@ static AUParameter *makeMeterParam(NSString *identifier, NSString *name,
                 mp[9].value = m.mbGRDb[3];
             }
 
-            static BOOL gOnce = NO;
-            if (!gOnce) {
-                gOnce = YES;
-                float mx = 0.f;
+            static int gProbe = 0;
+            gProbe++;
+            if (gProbe <= 10 || gProbe % 200 == 0) {
+                float mIn = 0.f, mOut = 0.f;
                 for (AUAudioFrameCount i = 0; i < frameCount; ++i) {
-                    float a = outL[i] < 0 ? -outL[i] : outL[i];
-                    if (a > mx) mx = a;
+                    float a = strongSelf->_inL[i] < 0 ? -strongSelf->_inL[i] : strongSelf->_inL[i];
+                    if (a > mIn) mIn = a;
+                    float b = outL[i] < 0 ? -outL[i] : outL[i];
+                    if (b > mOut) mOut = b;
                 }
-                NSLog(@"[MasteringAU] render frames=%u ch=%u inter=%d pull=%d bypass=%d maxOut=%f",
-                      (unsigned)frameCount, ch, (int)strongSelf->_inputInterleaved, (int)inStatus,
-                      (int)strongSelf.shouldBypassEffect, (double)mx);
+                NSLog(@"[MasteringAU] render#%d frames=%u ch=%u inter=%d pull=%d bypass=%d maxIn=%f maxOut=%f",
+                      gProbe, (unsigned)frameCount, ch, (int)strongSelf->_inputInterleaved, (int)inStatus,
+                      (int)strongSelf.shouldBypassEffect, (double)mIn, (double)mOut);
             }
 
             // Write output, honoring the host-provided buffer layout.
