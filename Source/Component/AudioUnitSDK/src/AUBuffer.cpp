@@ -1,6 +1,6 @@
 /*!
 	@file		AudioUnitSDK/AUBuffer.cpp
-	@copyright	© 2000-2025 Apple Inc. All rights reserved.
+	@copyright	© 2000-2024 Apple Inc. All rights reserved.
 */
 #include <AudioUnitSDK/AUBuffer.h>
 #include <AudioUnitSDK/AUUtility.h>
@@ -11,8 +11,6 @@
 #include <cstddef>
 
 namespace ausdk {
-
-AUSDK_BEGIN_NO_RT_WARNINGS
 
 inline void ThrowBadAlloc()
 {
@@ -68,8 +66,12 @@ AllocatedBuffer* BufferAllocator::Allocate(
 	const auto implSize = static_cast<uint32_t>(
 		offsetof(AllocatedBuffer, mAudioBufferList.mBuffers[std::max(UInt32(1), numberBuffers)]));
 	auto* const implMem = malloc(implSize);
-	auto* const allocatedBuffer = new (implMem)
-		AllocatedBuffer{ numberBuffers, maxBytesPerBuffer, implSize, bufferDataSize, bufferData };
+	auto* const allocatedBuffer =
+		new (implMem) AllocatedBuffer{ .mMaximumNumberBuffers = numberBuffers,
+			.mMaximumBytesPerBuffer = maxBytesPerBuffer,
+			.mHeaderSize = implSize,
+			.mBufferDataSize = bufferDataSize,
+			.mBufferData = bufferData };
 	allocatedBuffer->mAudioBufferList.mNumberBuffers = numberBuffers;
 	return allocatedBuffer;
 }
@@ -84,16 +86,13 @@ void BufferAllocator::Deallocate(AllocatedBuffer* allocatedBuffer)
 }
 
 
-ExpectedPtr<AudioBufferList> AllocatedBuffer::PrepareOrError(
-	UInt32 channelsPerBuffer, UInt32 bytesPerBuffer) AUSDK_RTSAFE
+AudioBufferList& AllocatedBuffer::Prepare(UInt32 channelsPerBuffer, UInt32 bytesPerBuffer)
 {
 	if (mAudioBufferList.mNumberBuffers > mMaximumNumberBuffers) {
-		// too many buffers
-		return Unexpected(-1);
+		throw std::out_of_range("AllocatedBuffer::Prepare(): too many buffers");
 	}
 	if (bytesPerBuffer > mMaximumBytesPerBuffer) {
-		// insufficient capacity
-		return Unexpected(-1);
+		throw std::out_of_range("AllocatedBuffer::Prepare(): insufficient capacity");
 	}
 
 	auto* ptr = static_cast<std::byte*>(mBufferData);
@@ -107,18 +106,15 @@ ExpectedPtr<AudioBufferList> AllocatedBuffer::PrepareOrError(
 		ptr += mMaximumBytesPerBuffer; // NOLINT ptr math
 	}
 	if (ptr > ptrend) {
-		// insufficient capacity
-		return Unexpected(-1);
+		throw std::out_of_range("AllocatedBuffer::Prepare(): insufficient capacity");
 	}
 	return mAudioBufferList;
 }
 
-ExpectedPtr<AudioBufferList> AllocatedBuffer::PrepareNullOrError(
-	UInt32 channelsPerBuffer, UInt32 bytesPerBuffer) AUSDK_RTSAFE
+AudioBufferList& AllocatedBuffer::PrepareNull(UInt32 channelsPerBuffer, UInt32 bytesPerBuffer)
 {
 	if (mAudioBufferList.mNumberBuffers > mMaximumNumberBuffers) {
-		// too many buffers
-		return Unexpected(-1);
+		throw std::out_of_range("AllocatedBuffer::PrepareNull(): too many buffers");
 	}
 	for (UInt32 bufIdx = 0, nBufs = mAudioBufferList.mNumberBuffers; bufIdx < nBufs; ++bufIdx) {
 		auto& buf = mAudioBufferList.mBuffers[bufIdx]; // NOLINT
@@ -129,12 +125,10 @@ ExpectedPtr<AudioBufferList> AllocatedBuffer::PrepareNullOrError(
 	return mAudioBufferList;
 }
 
-ExpectedPtr<AudioBufferList> AUBufferList::PrepareBufferOrError(
-	const AudioStreamBasicDescription& format, UInt32 nFrames) AUSDK_RTSAFE
+AudioBufferList& AUBufferList::PrepareBuffer(
+	const AudioStreamBasicDescription& format, UInt32 nFrames)
 {
-	if (nFrames > mAllocatedFrames) {
-		return Unexpected(kAudioUnitErr_TooManyFramesToProcess);
-	}
+	ausdk::ThrowExceptionIf(nFrames > mAllocatedFrames, kAudioUnitErr_TooManyFramesToProcess);
 
 	UInt32 nStreams = 0;
 	UInt32 channelsPerStream = 0;
@@ -146,18 +140,14 @@ ExpectedPtr<AudioBufferList> AUBufferList::PrepareBufferOrError(
 		channelsPerStream = 1;
 	}
 
-	if (nStreams > mAllocatedStreams) {
-		return Unexpected(kAudioUnitErr_FormatNotSupported);
-	}
-	auto maybeABL = mBuffers->PrepareOrError(channelsPerStream, nFrames * format.mBytesPerFrame);
-	if (maybeABL) {
-		mPtrState = EPtrState::ToMyMemory;
-	}
-	return maybeABL;
+	ausdk::ThrowExceptionIf(nStreams > mAllocatedStreams, kAudioUnitErr_FormatNotSupported);
+	auto& abl = mBuffers->Prepare(channelsPerStream, nFrames * format.mBytesPerFrame);
+	mPtrState = EPtrState::ToMyMemory;
+	return abl;
 }
 
-ExpectedPtr<AudioBufferList> AUBufferList::PrepareNullBufferOrError(
-	const AudioStreamBasicDescription& format, UInt32 nFrames) AUSDK_RTSAFE
+AudioBufferList& AUBufferList::PrepareNullBuffer(
+	const AudioStreamBasicDescription& format, UInt32 nFrames)
 {
 	UInt32 nStreams = 0;
 	UInt32 channelsPerStream = 0;
@@ -168,15 +158,11 @@ ExpectedPtr<AudioBufferList> AUBufferList::PrepareNullBufferOrError(
 		nStreams = format.mChannelsPerFrame;
 		channelsPerStream = 1;
 	}
-	if (nStreams > mAllocatedStreams) {
-		return Unexpected(kAudioUnitErr_FormatNotSupported);
-	}
-	auto maybeABL =
-		mBuffers->PrepareNullOrError(channelsPerStream, nFrames * format.mBytesPerFrame);
-	if (maybeABL) {
-		mPtrState = EPtrState::ToExternalMemory;
-	}
-	return maybeABL;
+
+	ausdk::ThrowExceptionIf(nStreams > mAllocatedStreams, kAudioUnitErr_FormatNotSupported);
+	auto& abl = mBuffers->PrepareNull(channelsPerStream, nFrames * format.mBytesPerFrame);
+	mPtrState = EPtrState::ToExternalMemory;
+	return abl;
 }
 
 void AUBufferList::Allocate(const AudioStreamBasicDescription& format, UInt32 nFrames)
@@ -184,7 +170,6 @@ void AUBufferList::Allocate(const AudioStreamBasicDescription& format, UInt32 nF
 	auto& alloc = BufferAllocator::instance();
 	if (mBuffers != nullptr) {
 		alloc.Deallocate(mBuffers);
-		mBuffers = nullptr;
 	}
 	const uint32_t nstreams = ASBD::IsInterleaved(format) ? 1 : format.mChannelsPerFrame;
 	mBuffers = alloc.Allocate(nstreams, nFrames * format.mBytesPerFrame, 0u);
@@ -204,7 +189,5 @@ void AUBufferList::Deallocate()
 	mAllocatedStreams = 0;
 	mPtrState = EPtrState::Invalid;
 }
-
-AUSDK_END_NO_RT_WARNINGS
 
 } // namespace ausdk

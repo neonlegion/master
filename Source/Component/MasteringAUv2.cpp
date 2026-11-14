@@ -137,6 +137,20 @@ public:
         _engine.setSampleRate(44100.0);
     }
 
+    // Called right after construction (elements exist by then): set up the
+    // indexed parameter store and defaults, so host SetParameter calls work
+    // even before Initialize.
+    void PostConstructor() override {
+        Globals()->UseIndexedParameters(kNumParamSlots);
+        const ParamDesc* descs = paramDescs();
+        for (UInt32 i = 0; i < P_Count; ++i) {
+            Globals()->SetParameter(i, descs[i].defV, true);
+            _engine.store().set(i, descs[i].defV);
+        }
+        for (int j = 0; j < kNumMeters; ++j)
+            Globals()->SetParameter(kMeterBase + j, (j < 5) ? -120.0f : 0.0f, true);
+    }
+
     OSStatus Initialize() override {
         // Host sets bus formats before Initialize; fill in defaults if unset.
         const AudioStreamBasicDescription inFmt = GetInput(0)->GetStreamFormat();
@@ -151,15 +165,6 @@ public:
             if (sr <= 0.0) sr = 44100.0;
             GetOutput(0)->SetStreamFormat(makeFloatFormat(sr, 2));
         }
-
-        Globals()->UseIndexedParameters(kNumParamSlots);
-        const ParamDesc* descs = paramDescs();
-        for (UInt32 i = 0; i < P_Count; ++i) {
-            Globals()->SetParameterRT(i, descs[i].defV, true);
-            _engine.store().set(i, descs[i].defV);
-        }
-        for (int j = 0; j < kNumMeters; ++j)
-            Globals()->SetParameterRT(kMeterBase + j, (j < 5) ? -120.0f : 0.0f, true);
 
         OSStatus err = ausdk::AUEffectBase::Initialize();
         if (err != noErr) return err;
@@ -210,7 +215,7 @@ public:
         if (ch > 2) ch = 2;
 
         for (UInt32 i = 0; i < P_Count; ++i)
-            _engine.store().set(i, Globals()->GetParameterRT(i));
+            _engine.store().set(i, Globals()->GetParameter(i));
 
         _inL.resize(nFrames);
         _inR.resize(nFrames);
@@ -271,14 +276,14 @@ public:
         }
 
         const Meters& m = _engine.meters();
-        Globals()->SetParameterRT(kMeterBase + kMeterMomentary, m.momentaryLUFS, true);
-        Globals()->SetParameterRT(kMeterBase + kMeterShortTerm, m.shortTermLUFS, true);
-        Globals()->SetParameterRT(kMeterBase + kMeterIntegrated, m.integratedLUFS, true);
-        Globals()->SetParameterRT(kMeterBase + kMeterLRA, m.loudnessRangeLU, true);
-        Globals()->SetParameterRT(kMeterBase + kMeterTruePeak, m.truePeakDbTP, true);
-        Globals()->SetParameterRT(kMeterBase + kMeterLimGR, m.limiterGRDb, true);
+        Globals()->SetParameter(kMeterBase + kMeterMomentary, m.momentaryLUFS, true);
+        Globals()->SetParameter(kMeterBase + kMeterShortTerm, m.shortTermLUFS, true);
+        Globals()->SetParameter(kMeterBase + kMeterIntegrated, m.integratedLUFS, true);
+        Globals()->SetParameter(kMeterBase + kMeterLRA, m.loudnessRangeLU, true);
+        Globals()->SetParameter(kMeterBase + kMeterTruePeak, m.truePeakDbTP, true);
+        Globals()->SetParameter(kMeterBase + kMeterLimGR, m.limiterGRDb, true);
         for (int b = 0; b < kNumMbBands; ++b)
-            Globals()->SetParameterRT(kMeterBase + kMeterMbGR0 + b, m.mbGRDb[b], true);
+            Globals()->SetParameter(kMeterBase + kMeterMbGR0 + b, m.mbGRDb[b], true);
         return noErr;
     }
 
@@ -357,7 +362,7 @@ public:
                           AudioUnitParameterValue& outValue) override {
         if (scope != kAudioUnitScope_Global || elem != 0) return kAudioUnitErr_InvalidElement;
         if (!isListedParam(id)) return kAudioUnitErr_InvalidParameter;
-        outValue = Globals()->GetParameterRT(id);
+        outValue = Globals()->GetParameter(id);
         return noErr;
     }
 
@@ -368,7 +373,7 @@ public:
         const ParamDesc& d = paramDescs()[id];
         if (value < d.minV) value = d.minV;
         if (value > d.maxV) value = d.maxV;
-        Globals()->SetParameterRT(id, value, true);
+        Globals()->SetParameter(id, value, true);
         _engine.store().set(id, value);
         return noErr;
     }
@@ -402,7 +407,7 @@ public:
             return kAudioUnitErr_InvalidPropertyValue;
         const ParamValues& v = presets[(size_t)preset.presetNumber].values;
         for (UInt32 i = 0; i < P_Count; ++i) {
-            Globals()->SetParameterRT(i, v.v[i], true);
+            Globals()->SetParameter(i, v.v[i], true);
             _engine.store().set(i, v.v[i]);
         }
         _engine.reset();

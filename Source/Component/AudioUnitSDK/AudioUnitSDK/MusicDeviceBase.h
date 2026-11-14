@@ -1,6 +1,6 @@
 /*!
 	@file		AudioUnitSDK/MusicDeviceBase.h
-	@copyright	© 2000-2025 Apple Inc. All rights reserved.
+	@copyright	© 2000-2024 Apple Inc. All rights reserved.
 */
 #ifndef AudioUnitSDK_MusicDeviceBase_h
 #define AudioUnitSDK_MusicDeviceBase_h
@@ -14,8 +14,6 @@
 #include <AudioToolbox/MusicDevice.h>
 
 namespace ausdk {
-
-AUSDK_BEGIN_NO_RT_WARNINGS
 
 // ________________________________________________________________________
 //	MusicDeviceBase
@@ -61,8 +59,6 @@ public:
 		UInt8 inChannel, UInt8 inNoteNumber, UInt8 inVelocity, UInt32 inStartFrame) override;
 	virtual OSStatus GetInstrumentCount(UInt32& outInstCount) const;
 };
-
-AUSDK_END_NO_RT_WARNINGS
 
 } // namespace ausdk
 

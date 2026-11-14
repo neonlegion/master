@@ -1,13 +1,11 @@
 /*!
 	@file		AudioUnitSDK/AUInputElement.cpp
-	@copyright	© 2000-2025 Apple Inc. All rights reserved.
+	@copyright	© 2000-2024 Apple Inc. All rights reserved.
 */
 #include <AudioUnitSDK/AUInputElement.h>
 #include <AudioUnitSDK/AUUtility.h>
 
 namespace ausdk {
-
-AUSDK_BEGIN_NO_RT_WARNINGS
 
 constexpr bool HasGoodBufferPointers(const AudioBufferList& abl, UInt32 nBytes) noexcept
 {
@@ -70,23 +68,17 @@ OSStatus AUInputElement::SetStreamFormat(const AudioStreamBasicDescription& fmt)
 }
 
 OSStatus AUInputElement::PullInput(AudioUnitRenderActionFlags& ioActionFlags,
-	const AudioTimeStamp& inTimeStamp, AudioUnitElement inElement, UInt32 nFrames) AUSDK_RTSAFE
+	const AudioTimeStamp& inTimeStamp, AudioUnitElement inElement, UInt32 nFrames)
 {
 	AUSDK_Require(IsActive(), kAudioUnitErr_NoConnection);
 
 	auto& iob = IOBuffer();
 
-	ExpectedPtr<AudioBufferList> pullBuffer =
-		(HasConnection() || !WillAllocateBuffer())
-			? iob.PrepareNullBufferOrError(GetStreamFormat(), nFrames)
-			: iob.PrepareBufferOrError(GetStreamFormat(), nFrames);
-	if (!pullBuffer) {
-		return pullBuffer.error();
-	}
+	AudioBufferList& pullBuffer = (HasConnection() || !WillAllocateBuffer())
+									  ? iob.PrepareNullBuffer(GetStreamFormat(), nFrames)
+									  : iob.PrepareBuffer(GetStreamFormat(), nFrames);
 
-	return PullInputWithBufferList(ioActionFlags, inTimeStamp, inElement, nFrames, *pullBuffer);
+	return PullInputWithBufferList(ioActionFlags, inTimeStamp, inElement, nFrames, pullBuffer);
 }
-
-AUSDK_END_NO_RT_WARNINGS
 
 } // namespace ausdk

@@ -1,6 +1,6 @@
 /*!
 	@file		AudioUnitSDK/AUPlugInDispatch.cpp
-	@copyright	© 2000-2025 Apple Inc. All rights reserved.
+	@copyright	© 2000-2024 Apple Inc. All rights reserved.
 */
 // clang-format off
 #include <AudioUnitSDK/AUConfig.h> // must come first
@@ -22,11 +22,10 @@
 #include <cstddef>
 #include <cstring>
 
+#define CATCH_EXCEPTIONS_IN_RENDER_METHODS TARGET_OS_OSX                                   // NOLINT
 #define AUSDK_HAVE_MUSIC_DEVICE_PREPARE_RELEASE (AUSDK_HAVE_MUSIC_DEVICE && TARGET_OS_OSX) // NOLINT
 
 namespace ausdk {
-
-AUSDK_BEGIN_NO_RT_WARNINGS
 
 // ------------------------------------------------------------------------------------------------
 static auto AUInstance(void* self)
@@ -273,7 +272,7 @@ static OSStatus AUMethodGetParameter(void* self, AudioUnitParameterID param, Aud
 {
 	OSStatus result = noErr;
 	try {
-        // this is a (potentially) realtime method; no lock
+		const AUInstanceGuard guard(self);
 		result = (value == nullptr ? kAudio_ParamError
 								   : AUInstance(self)->GetParameter(param, scope, elem, *value));
 	}
@@ -309,39 +308,47 @@ static OSStatus AUMethodScheduleParameters(
 	return result;
 }
 
-// try/catch unneeded because DoRender is noexcept.
 static OSStatus AUMethodRender(void* self, AudioUnitRenderActionFlags* ioActionFlags,
 	const AudioTimeStamp* inTimeStamp, UInt32 inOutputBusNumber, UInt32 inNumberFrames,
-	AudioBufferList* ioData) noexcept AUSDK_RTSAFE
+	AudioBufferList* ioData)
 {
 	OSStatus result = noErr;
 
-	// this is a processing method; no lock
-	AudioUnitRenderActionFlags tempFlags{};
+#if CATCH_EXCEPTIONS_IN_RENDER_METHODS
+	try {
+#endif
+		// this is a processing method; no lock
+		AudioUnitRenderActionFlags tempFlags{};
 
-	if (inTimeStamp == nullptr || ioData == nullptr) {
-		result = kAudio_ParamError;
-	} else {
-		if (ioActionFlags == nullptr) {
-			tempFlags = 0;
-			ioActionFlags = &tempFlags;
+		if (inTimeStamp == nullptr || ioData == nullptr) {
+			result = kAudio_ParamError;
+		} else {
+			if (ioActionFlags == nullptr) {
+				tempFlags = 0;
+				ioActionFlags = &tempFlags;
+			}
+			result = AUInstance(self)->DoRender(
+				*ioActionFlags, *inTimeStamp, inOutputBusNumber, inNumberFrames, *ioData);
 		}
-		result = AUInstance(self)->DoRender(
-			*ioActionFlags, *inTimeStamp, inOutputBusNumber, inNumberFrames, *ioData);
+
+#if CATCH_EXCEPTIONS_IN_RENDER_METHODS
 	}
+	AUSDK_Catch(result)
+#endif
 
 	return result;
 }
 
-// try/catch needed here because ComplexRender is virtual and can't be retroactively noexcept.
 static OSStatus AUMethodComplexRender(void* self, AudioUnitRenderActionFlags* ioActionFlags,
 	const AudioTimeStamp* inTimeStamp, UInt32 inOutputBusNumber, UInt32 inNumberOfPackets,
 	UInt32* outNumberOfPackets, AudioStreamPacketDescription* outPacketDescriptions,
-	AudioBufferList* ioData, void* outMetadata, UInt32* outMetadataByteSize) noexcept AUSDK_RTSAFE
+	AudioBufferList* ioData, void* outMetadata, UInt32* outMetadataByteSize)
 {
 	OSStatus result = noErr;
 
+#if CATCH_EXCEPTIONS_IN_RENDER_METHODS
 	try {
+#endif
 		// this is a processing method; no lock
 		AudioUnitRenderActionFlags tempFlags{};
 
@@ -356,8 +363,11 @@ static OSStatus AUMethodComplexRender(void* self, AudioUnitRenderActionFlags* io
 				inOutputBusNumber, inNumberOfPackets, outNumberOfPackets, outPacketDescriptions,
 				*ioData, outMetadata, outMetadataByteSize);
 		}
+
+#if CATCH_EXCEPTIONS_IN_RENDER_METHODS
 	}
-	AUSDK_RT_UNSAFE(AUSDK_Catch(result))
+	AUSDK_Catch(result)
+#endif
 
 	return result;
 }
@@ -373,66 +383,80 @@ static OSStatus AUMethodReset(void* self, AudioUnitScope scope, AudioUnitElement
 	return result;
 }
 
-// try/catch unneeded because DoProcess is noexcept.
 static OSStatus AUMethodProcess(void* self, AudioUnitRenderActionFlags* ioActionFlags,
-	const AudioTimeStamp* inTimeStamp, UInt32 inNumberFrames,
-	AudioBufferList* ioData) noexcept AUSDK_RTSAFE
+	const AudioTimeStamp* inTimeStamp, UInt32 inNumberFrames, AudioBufferList* ioData)
 {
 	OSStatus result = noErr;
 
-	// this is a processing method; no lock
-	bool doParamCheck = true;
+#if CATCH_EXCEPTIONS_IN_RENDER_METHODS
+	try {
+#endif
+		// this is a processing method; no lock
+		bool doParamCheck = true;
 
-	AudioUnitRenderActionFlags tempFlags{};
+		AudioUnitRenderActionFlags tempFlags{};
 
-	if (ioActionFlags == nullptr) {
-		tempFlags = 0;
-		ioActionFlags = &tempFlags;
-	} else {
-		if ((*ioActionFlags & kAudioUnitRenderAction_DoNotCheckRenderArgs) != 0u) {
-			doParamCheck = false;
+		if (ioActionFlags == nullptr) {
+			tempFlags = 0;
+			ioActionFlags = &tempFlags;
+		} else {
+			if ((*ioActionFlags & kAudioUnitRenderAction_DoNotCheckRenderArgs) != 0u) {
+				doParamCheck = false;
+			}
 		}
-	}
 
-	if (doParamCheck && (inTimeStamp == nullptr || ioData == nullptr)) {
-		result = kAudio_ParamError;
-	} else {
-		result = AUInstance(self)->DoProcess(*ioActionFlags, *inTimeStamp, inNumberFrames, *ioData);
+		if (doParamCheck && (inTimeStamp == nullptr || ioData == nullptr)) {
+			result = kAudio_ParamError;
+		} else {
+			result =
+				AUInstance(self)->DoProcess(*ioActionFlags, *inTimeStamp, inNumberFrames, *ioData);
+		}
+
+#if CATCH_EXCEPTIONS_IN_RENDER_METHODS
 	}
+	AUSDK_Catch(result)
+#endif
 
 	return result;
 }
 
-// try/catch unneeded because DoProcessMultiple is noexcept.
 static OSStatus AUMethodProcessMultiple(void* self, AudioUnitRenderActionFlags* ioActionFlags,
 	const AudioTimeStamp* inTimeStamp, UInt32 inNumberFrames, UInt32 inNumberInputBufferLists,
 	const AudioBufferList** inInputBufferLists, UInt32 inNumberOutputBufferLists,
-	AudioBufferList** ioOutputBufferLists) noexcept AUSDK_RTSAFE
+	AudioBufferList** ioOutputBufferLists)
 {
 	OSStatus result = noErr;
 
-	// this is a processing method; no lock
-	bool doParamCheck = true;
+#if CATCH_EXCEPTIONS_IN_RENDER_METHODS
+	try {
+#endif
+		// this is a processing method; no lock
+		bool doParamCheck = true;
 
-	AudioUnitRenderActionFlags tempFlags{};
+		AudioUnitRenderActionFlags tempFlags{};
 
-	if (ioActionFlags == nullptr) {
-		tempFlags = 0;
-		ioActionFlags = &tempFlags;
-	} else {
-		if ((*ioActionFlags & kAudioUnitRenderAction_DoNotCheckRenderArgs) != 0u) {
-			doParamCheck = false;
+		if (ioActionFlags == nullptr) {
+			tempFlags = 0;
+			ioActionFlags = &tempFlags;
+		} else {
+			if ((*ioActionFlags & kAudioUnitRenderAction_DoNotCheckRenderArgs) != 0u) {
+				doParamCheck = false;
+			}
 		}
-	}
 
-	if (doParamCheck && (inTimeStamp == nullptr || inInputBufferLists == nullptr ||
-							ioOutputBufferLists == nullptr)) {
-		result = kAudio_ParamError;
-	} else {
-		result = AUInstance(self)->DoProcessMultiple(*ioActionFlags, *inTimeStamp, inNumberFrames,
-			inNumberInputBufferLists, inInputBufferLists, inNumberOutputBufferLists,
-			ioOutputBufferLists);
+		if (doParamCheck && (inTimeStamp == nullptr || inInputBufferLists == nullptr ||
+								ioOutputBufferLists == nullptr)) {
+			result = kAudio_ParamError;
+		} else {
+			result = AUInstance(self)->DoProcessMultiple(*ioActionFlags, *inTimeStamp,
+				inNumberFrames, inNumberInputBufferLists, inInputBufferLists,
+				inNumberOutputBufferLists, ioOutputBufferLists);
+		}
+
+#if CATCH_EXCEPTIONS_IN_RENDER_METHODS
 	}
+	AUSDK_Catch(result)
+#endif
 
 	return result;
 }
@@ -766,7 +790,5 @@ AudioComponentMethod AUMusicLookup::Lookup(SInt16 selector)
 #endif // AUSDK_HAVE_MIDI
 }
 #endif // AUSDK_HAVE_MUSIC_DEVICE
-
-AUSDK_END_NO_RT_WARNINGS
 
 } // namespace ausdk
