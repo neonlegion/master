@@ -81,6 +81,7 @@ targets:
       - sdk: CoreMIDI.framework
     settings:
       base:
+        PRODUCT_NAME: MasteringAU
         PRODUCT_BUNDLE_PACKAGE_TYPE: BNDL
         WRAPPER_EXTENSION: component
         INFOPLIST_FILE: Source/Component/Info.plist
