@@ -59,6 +59,41 @@ targets:
         OTHER_LDFLAGS: "-framework Foundation -framework AVFAudio -framework AudioToolbox"
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks @executable_path/Frameworks"
 
+  # AUv2 in-process component (MasteringAU.component) — the Logic-stable path.
+  # Install the built bundle to ~/Library/Audio/Plug-Ins/Components and rescan.
+  # Uses Apple's AudioUnitSDK (vendored under Source/Component/AudioUnitSDK, the
+  # AUPublic C++ classes Apple no longer ships in the OS SDK).
+  MasteringAUComponent:
+    type: bundle
+    platform: macOS
+    productName: MasteringAU
+    sources:
+      - path: Source/Component/MasteringAUv2.cpp
+        compiler-flags: "-std=c++20"
+      - path: Source/Component/MasteringAUView.mm
+      - path: Source/Component/AudioUnitSDK/src
+    dependencies:
+      - sdk: AudioToolbox.framework
+      - sdk: CoreAudio.framework
+      - sdk: CoreFoundation.framework
+      - sdk: Foundation.framework
+      - sdk: AppKit.framework
+      - sdk: CoreMIDI.framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_PACKAGE_TYPE: BNDL
+        WRAPPER_EXTENSION: component
+        INFOPLIST_FILE: Source/Component/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        PRODUCT_BUNDLE_IDENTIFIER: com.vibe.MasteringAU.component
+        SKIP_INSTALL: YES
+        CLANG_ENABLE_OBJC_ARC: NO
+        CLANG_CXX_LANGUAGE_STANDARD: c++20
+        OTHER_CPLUSPLUSFLAGS: "-std=c++20"
+        HEADER_SEARCH_PATHS: "$(PROJECT_DIR)/Source/Component/AudioUnitSDK"
+        OTHER_LDFLAGS: "-framework AudioToolbox -framework CoreAudio -framework CoreFoundation -framework Foundation -framework AppKit -framework CoreMIDI"
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks @executable_path/Frameworks"
+
   # Minimal host app: embeds MasteringAU.appex in Contents/PlugIns. Launching
   # this app registers the AUv3 extension with PluginKit, after which auval
   # and Logic Pro can see the audio unit. (A bare .appex in a Components dir

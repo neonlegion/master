@@ -1,7 +1,9 @@
-# MasteringAU — mastering Audio Unit (AUv3) for Logic Pro
+# MasteringAU — mastering Audio Unit for Logic Pro (AUv2 component + AUv3 appex)
 
-A complete stereo mastering chain as an AUv3 audio unit, plus a portable,
-heavily unit-tested C++ DSP core and an offline renderer.
+A complete stereo mastering chain as an audio unit, plus a portable,
+heavily unit-tested C++ DSP core and an offline renderer. Ships two shells
+over the same DSP core: an in-process **AUv2 `.component`** (recommended for
+Logic Pro) and an **AUv3 `.appex`**.
 
 ```
 input gain → HP filter → mono-low → 6-band parametric EQ → M/S width →
@@ -39,7 +41,15 @@ Source/Plugin/    AUv3 wrapper for Logic (macOS-only, needs Xcode)
                   "Meters" parameters), factory presets, internalRenderBlock
                   with pullInputBlock driving the engine, latency
   Info.plist      AUv3 component registration (aufx / MstA / Vibe)
-project.yml       XcodeGen spec for the .appex target
+Source/Component/ AUv2 component (MasteringAU.component) + custom Cocoa UI
+  MasteringAUv2.cpp    ausdk::AUEffectBase subclass: buses, parameters, presets,
+                       meters, latency, CocoaUI property; entry via
+                       AUSDK_COMPONENT_ENTRY -> MasteringAUComponentFactory
+  MasteringAUView.mm   NSView UI (AUCocoaUIBase factory) bound to the params
+  Info.plist           AUv2 component registration (factoryFunction, aufx/MstA/Vibe)
+  AudioUnitSDK/        Apple's AUPublic C++ SDK (vendored from apple/AudioUnitSDK;
+                       Apple no longer ships these headers in the OS SDK)
+project.yml       XcodeGen spec for the .appex, .component and host targets
 Tests/test_main.cpp  738-check DSP test suite (runs on Linux)
 Tools/            offline_render: master a WAV with a factory preset
 CMakeLists.txt    builds dsp_tests + offline_render on any platform
@@ -111,6 +121,49 @@ Loud −9 LUFS, Air & Warmth, Vinyl Prep. The plugin reports its latency
 
 Component: type `aufx` (effect), subtype `MstA`, manufacturer `Vibe`,
 stereo or mono in/out, float32, any sample rate, processes in place.
+
+## AUv2 component (MasteringAU.component) — recommended for Logic Pro
+
+The AUv3 appex path proved unstable in Logic Pro on Ventura 13.7: Logic's main
+process crashed (SIGSEGV in its own insert-slot menu code) right after the
+XPC extension round-trip, reproducibly, while the extension process stayed
+clean and `auval` passed every time. The repo therefore also ships a classic
+in-process AUv2 component — the same code path Logic uses for v2 plugins —
+built from the identical DSP core, with a custom Cocoa UI.
+
+```
+xcodegen generate
+open MasteringAU.xcodeproj
+# Product ▸ Build, target MasteringAUComponent (scheme MasteringAUComponent)
+```
+
+Install and rescan (once per build; if Logic ever crashes on *any* plugin
+select, run the cleanup below first):
+
+```
+cp -R build/Release/MasteringAU.component ~/Library/Audio/Plug-Ins/Components/
+rm -rf ~/Library/Caches/AudioUnitCache
+killall -9 AudioComponentRegistrar
+auval -v aufx MstA Vibe     # must print AU VALIDATION SUCCEEDED before Logic
+```
+
+Cleanup (removes every trace of the plugin and rebuilds the AU cache):
+
+```
+rm -rf ~/Library/Audio/Plug-Ins/Components/MasteringAU.component \
+       ~/Applications/MasteringAUHost.app \
+       ~/Library/Audio/AudioUnits/Components/MasteringAU.* \
+       ~/Library/Caches/AudioUnitCache
+killall -9 AudioComponentRegistrar pluginkitd
+lsregister -kill -r -domain local -domain user
+```
+
+In Logic: **Audio FX ▸ Vibe ▸ MasteringAU**. The custom window shows live
+BS.1770 meters (integrated/momentary/short-term LUFS, LRA, true peak, limiter
+and per-band gain reduction), the chain sections (input/output, high-pass,
+stereo, saturation, limiter, dither), a 6-band EQ and the 4-band multiband
+compressor. Same five factory presets. Component codes are unchanged
+(`aufx` / `MstA` / `Vibe`), so install only one shell at a time.
 
 ## Notes / design decisions
 
