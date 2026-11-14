@@ -319,14 +319,25 @@ static AUParameter *makeMeterParam(NSString *identifier, NSString *name,
                 memset(strongSelf->_inL.data(), 0, frameCount * sizeof(float));
                 memset(strongSelf->_inR.data(), 0, frameCount * sizeof(float));
             } else if (strongSelf->_inputInterleaved) {
-                const float *inter = strongSelf->_inInter.data();
+                // Read from the ABL's current mData: the host may substitute its own
+                // buffers during pullInputBlock instead of honoring ours.
+                const float *inter = (const float *)strongSelf->_inputABL->mBuffers[0].mData;
                 for (AUAudioFrameCount i = 0; i < frameCount; ++i) {
                     strongSelf->_inL[i] = inter[i * ch];
                     strongSelf->_inR[i] = ch > 1 ? inter[i * ch + 1] : inter[i * ch];
                 }
-            } else if (ch == 1) {
-                memcpy(strongSelf->_inR.data(), strongSelf->_inL.data(),
-                       frameCount * sizeof(float));
+            } else {
+                const float *s0 = (const float *)strongSelf->_inputABL->mBuffers[0].mData;
+                if (s0 && s0 != strongSelf->_inL.data())
+                    memcpy(strongSelf->_inL.data(), s0, frameCount * sizeof(float));
+                if (ch > 1) {
+                    const float *s1 = (const float *)strongSelf->_inputABL->mBuffers[1].mData;
+                    if (s1 && s1 != strongSelf->_inR.data())
+                        memcpy(strongSelf->_inR.data(), s1, frameCount * sizeof(float));
+                } else {
+                    memcpy(strongSelf->_inR.data(), strongSelf->_inL.data(),
+                           frameCount * sizeof(float));
+                }
             }
 
             // Push host parameter values into the lock-free engine store.
@@ -430,7 +441,9 @@ static AUParameter *makeMeterParam(NSString *identifier, NSString *name,
 }
 
 - (BOOL)canProcessInPlace {
-    return YES;
+    // NO: with in-place rendering the host delivers input inside outputData and the
+    // pull path yields zeros; non-in-place forces input delivery via pullInputBlock.
+    return NO;
 }
 
 - (NSTimeInterval)latency {
