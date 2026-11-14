@@ -12,6 +12,7 @@
 #include <AudioToolbox/AudioUnitProperties.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include <cstring>
+#include <cstdlib>
 #include <cmath>
 #include <map>
 #include <mutex>
@@ -435,11 +436,70 @@ public:
             outWritable = false;
             return noErr;
         }
+        if (scope == kAudioUnitScope_Global &&
+            (id == kAudioUnitProperty_ParameterStringFromValue ||
+             id == kAudioUnitProperty_ParameterValueFromString)) {
+            outDataSize = (id == kAudioUnitProperty_ParameterStringFromValue)
+                              ? sizeof(AudioUnitParameterStringFromValue)
+                              : sizeof(AudioUnitParameterValueFromString);
+            outWritable = false;
+            return noErr;
+        }
         return ausdk::AUBase::GetPropertyInfo(id, scope, elem, outDataSize, outWritable);
     }
 
     OSStatus GetProperty(AudioUnitPropertyID id, AudioUnitScope scope, AudioUnitElement elem,
                          void* outData) override {
+        if (id == kAudioUnitProperty_ParameterStringFromValue && scope == kAudioUnitScope_Global) {
+            auto* ss = (AudioUnitParameterStringFromValue*)outData;
+            AudioUnitParameterID pid = elem ? elem : ss->inParamID;
+            if (!isAudioParam(pid)) return kAudioUnitErr_InvalidParameter;
+            const ParamDesc& d = paramDescs()[pid];
+            float v = ss->inValue ? *ss->inValue : d.defV;
+            if (d.choices && d.numChoices > 0) {
+                int idx = (int)lrintf(v);
+                if (idx < 0) idx = 0;
+                if (idx >= d.numChoices) idx = d.numChoices - 1;
+                ss->outString = (CFStringRef)CFRetain(cachedCFString(d.choices[idx]));
+            } else if (!strcmp(d.unit, "dB")) {
+                ss->outString = CFStringCreateWithFormat(kCFAllocatorDefault, nullptr, CFSTR("%.1f dB"), (double)v);
+            } else if (!strcmp(d.unit, "Hz")) {
+                ss->outString = (v >= 1000.0f)
+                    ? CFStringCreateWithFormat(kCFAllocatorDefault, nullptr, CFSTR("%.2f kHz"), (double)(v / 1000.0f))
+                    : CFStringCreateWithFormat(kCFAllocatorDefault, nullptr, CFSTR("%.0f Hz"), (double)v);
+            } else if (!strcmp(d.unit, "ms")) {
+                ss->outString = CFStringCreateWithFormat(kCFAllocatorDefault, nullptr, CFSTR("%.1f ms"), (double)v);
+            } else if (!strcmp(d.unit, "%")) {
+                ss->outString = CFStringCreateWithFormat(kCFAllocatorDefault, nullptr, CFSTR("%.0f %%"), (double)v);
+            } else {
+                ss->outString = CFStringCreateWithFormat(kCFAllocatorDefault, nullptr, CFSTR("%.2f"), (double)v);
+            }
+            return noErr;
+        }
+        if (id == kAudioUnitProperty_ParameterValueFromString && scope == kAudioUnitScope_Global) {
+            auto* vs = (AudioUnitParameterValueFromString*)outData;
+            AudioUnitParameterID pid = elem ? elem : vs->inParamID;
+            if (!isAudioParam(pid)) return kAudioUnitErr_InvalidParameter;
+            const ParamDesc& d = paramDescs()[pid];
+            if (d.choices && d.numChoices > 0 && vs->inString) {
+                for (int c = 0; c < d.numChoices; ++c) {
+                    if (CFStringCompare(vs->inString, cachedCFString(d.choices[c]), 0) == kCFCompareEqualTo) {
+                        vs->outValue = (AudioUnitParameterValue)c;
+                        return noErr;
+                    }
+                }
+                return kAudioUnitErr_InvalidPropertyValue;
+            }
+            char buf[64];
+            if (vs->inString && CFStringGetCString(vs->inString, buf, sizeof(buf), kCFStringEncodingUTF8)) {
+                float v = (float)strtod(buf, nullptr);
+                if (v < d.minV) v = d.minV;
+                if (v > d.maxV) v = d.maxV;
+                vs->outValue = v;
+                return noErr;
+            }
+            return kAudioUnitErr_InvalidPropertyValue;
+        }
         if (id == kAudioUnitProperty_CocoaUI && scope == kAudioUnitScope_Global && elem == 0) {
             auto* info = (AudioUnitCocoaViewInfo*)outData;
             CFBundleRef bundle = CFBundleGetBundleWithIdentifier(CFSTR("com.vibe.MasteringAU.component"));
