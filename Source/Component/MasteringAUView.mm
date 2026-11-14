@@ -144,7 +144,7 @@ static NSColor* warnColor(void) { return [NSColor colorWithCalibratedRed:1.0 gre
     box.fillColor = panelColor();
     box.title = title;
     box.titleFont = [NSFont boldSystemFontOfSize:11];
-    box.titlePosition = NSAtTopLeftTitlePosition;
+    box.titlePosition = NSAtTop;
     box.contentViewMargins = NSMakeSize(4, 4);
     [self addSubview:box];
     return [box autorelease];
