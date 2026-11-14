@@ -381,22 +381,26 @@ public:
     OSStatus GetPresets(CFArrayRef* outData) const override {
         size_t count = 0;
         const FactoryPreset* presets = factoryPresets(count);
+        NSLog(@"[MasteringAU] GetPresets outData=%p count=%zu", (void*)outData, count);
         CFMutableArrayRef arr = CFArrayCreateMutable(kCFAllocatorDefault, (CFIndex)count, &kCFTypeArrayCallBacks);
+        NSLog(@"[MasteringAU] arr=%p", (void*)arr);
         for (size_t i = 0; i < count; ++i) {
             CFStringRef name = cachedCFString(presets[i].name);
             SInt32 number = (SInt32)i;
             CFNumberRef num = CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt32Type, &number);
-            const void* keys[2] = { CFSTR(kAUPresetNameKey), CFSTR(kAUPresetNumberKey) };
-            const void* vals[2] = { name, num };
+            const void* keys[2] = { (const void*)CFSTR(kAUPresetNameKey), (const void*)CFSTR(kAUPresetNumberKey) };
+            const void* vals[2] = { (const void*)name, (const void*)num };
             CFDictionaryRef dict = CFDictionaryCreate(kCFAllocatorDefault, keys, vals, 2,
                                                       &kCFTypeDictionaryKeyCallBacks,
                                                       &kCFTypeDictionaryValueCallBacks);
-            CFArrayAppendValue(arr, dict);
-            CFRelease(dict);
-            CFRelease(num);
+            NSLog(@"[MasteringAU] preset %zu name=%@ num=%p dict=%p", i, name, (void*)num, (void*)dict);
+            if (dict && arr) CFArrayAppendValue(arr, dict);
+            if (dict) CFRelease(dict);
+            if (num) CFRelease(num);
         }
         if (outData) *outData = arr; // +1, caller owns
-        else CFRelease(arr);
+        else if (arr) CFRelease(arr);
+        NSLog(@"[MasteringAU] GetPresets returning arr=%p count=%ld", (void*)arr, arr ? (long)CFArrayGetCount(arr) : -1L);
         return noErr;
     }
 
