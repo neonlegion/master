@@ -345,7 +345,7 @@ public:
         if (!isAudioParam(id)) return kAudioUnitErr_InvalidProperty;
         const ParamDesc& d = paramDescs()[id];
         if (!d.choices || d.numChoices <= 0) return kAudioUnitErr_InvalidProperty;
-        if (outStrings) *outStrings = CFRetain(cachedStringArray(d.choices, d.numChoices));
+        if (outStrings) *outStrings = (CFArrayRef)CFRetain(cachedStringArray(d.choices, d.numChoices));
         return noErr;
     }
 
@@ -354,7 +354,7 @@ public:
         if (scope != kAudioUnitScope_Global) return kAudioUnitErr_InvalidScope;
         const char* name = groupForClumpId(clumpID);
         if (!name) return kAudioUnitErr_InvalidProperty;
-        if (outName) *outName = CFRetain(cachedCFString(name));
+        if (outName) *outName = (CFStringRef)CFRetain(cachedCFString(name));
         return noErr;
     }
 
@@ -430,7 +430,12 @@ public:
         if (id == kAudioUnitProperty_CocoaUI && scope == kAudioUnitScope_Global && elem == 0) {
             auto* info = (AudioUnitCocoaViewInfo*)outData;
             CFBundleRef bundle = CFBundleGetBundleWithIdentifier(CFSTR("com.vibe.MasteringAU.component"));
-            info->mCocoaAUViewBundleLocation = bundle ? CFBundleGetBundleURL(bundle) : nullptr;
+            if (bundle) {
+                static CFURLRef sBundleURL = CFBundleCopyBundleURL(bundle); // cached, never released
+                info->mCocoaAUViewBundleLocation = sBundleURL;
+            } else {
+                info->mCocoaAUViewBundleLocation = nullptr;
+            }
             CFStringRef cls = CFSTR("MasteringAUViewFactory");
             memcpy(info->mCocoaAUViewClass, &cls, sizeof(CFStringRef));
             return noErr;
