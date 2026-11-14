@@ -379,28 +379,32 @@ public:
     }
 
     OSStatus GetPresets(CFArrayRef* outData) const override {
-        // Built once and kept alive for the life of the process (magic static);
-        // every caller gets a +1 retained reference. Avoids any per-call
-        // lifecycle issue with the property dispatch.
+        // kAudioUnitProperty_FactoryPresets (v2) is a CFArray of raw AUPreset
+        // structs, NOT CFDictionary objects. Items are pointers into a static
+        // vector (borrowed; callbacks do no retain/release), names are cached
+        // forever. The array itself is built once and callers get a +1 ref.
         static CFArrayRef sPresets = []() -> CFArrayRef {
+            static std::vector<AUPreset> items;
             size_t count = 0;
             const FactoryPreset* presets = factoryPresets(count);
-            CFMutableArrayRef arr = CFArrayCreateMutable(kCFAllocatorDefault, (CFIndex)count,
-                                                         &kCFTypeArrayCallBacks);
+            items.reserve(count);
             for (size_t i = 0; i < count; ++i) {
-                CFStringRef name = cachedCFString(presets[i].name);
-                SInt32 number = (SInt32)i;
-                CFNumberRef num = CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt32Type, &number);
-                const void* keys[2] = { (const void*)CFSTR(kAUPresetNameKey),
-                                        (const void*)CFSTR(kAUPresetNumberKey) };
-                const void* vals[2] = { (const void*)name, (const void*)num };
-                CFDictionaryRef dict = CFDictionaryCreate(kCFAllocatorDefault, keys, vals, 2,
-                                                          &kCFTypeDictionaryKeyCallBacks,
-                                                          &kCFTypeDictionaryValueCallBacks);
-                if (arr && dict) CFArrayAppendValue(arr, dict);
-                if (dict) CFRelease(dict);
-                if (num) CFRelease(num);
+                AUPreset p;
+                p.presetNumber = (SInt32)i;
+                p.presetName = cachedCFString(presets[i].name);
+                items.push_back(p);
             }
+            static const CFArrayCallBacks callbacks = {
+                0,
+                nullptr, // retain: items are static, borrowed
+                nullptr, // release
+                nullptr, // copyDescription
+                [](const void* a, const void* b) -> Boolean {
+                    return ((const AUPreset*)a)->presetNumber == ((const AUPreset*)b)->presetNumber;
+                }
+            };
+            CFMutableArrayRef arr = CFArrayCreateMutable(kCFAllocatorDefault, (CFIndex)count, &callbacks);
+            for (size_t i = 0; i < count; ++i) CFArrayAppendValue(arr, &items[i]);
             fprintf(stderr, "[MasteringAU] GetPresets built arr=%p count=%ld\n", (void*)arr,
                     arr ? (long)CFArrayGetCount(arr) : -1L);
             return (CFArrayRef)arr;

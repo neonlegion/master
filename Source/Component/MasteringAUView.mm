@@ -350,13 +350,9 @@ static NSColor* warnColor(void) { return [NSColor colorWithCalibratedRed:1.0 gre
                                  &arr, &size) == noErr && arr != nullptr) {
             CFIndex n = CFArrayGetCount(arr);
             for (CFIndex i = 0; i < n; ++i) {
-                CFDictionaryRef d = (CFDictionaryRef)CFArrayGetValueAtIndex(arr, i);
-                CFStringRef name = (CFStringRef)CFDictionaryGetValue(d, CFSTR(kAUPresetNameKey));
-                CFNumberRef num = (CFNumberRef)CFDictionaryGetValue(d, CFSTR(kAUPresetNumberKey));
-                SInt32 number = 0;
-                if (num) CFNumberGetValue(num, kCFNumberSInt32Type, &number);
-                [_presetPopup addItemWithTitle:(__bridge NSString*)name];
-                [[_presetPopup lastItem] setTag:number];
+                AUPreset* p = (AUPreset*)CFArrayGetValueAtIndex(arr, i);
+                [_presetPopup addItemWithTitle:(__bridge NSString*)p->presetName];
+                [[_presetPopup lastItem] setTag:p->presetNumber];
             }
             CFRelease(arr);
         }
