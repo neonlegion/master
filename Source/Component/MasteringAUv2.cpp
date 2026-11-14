@@ -379,28 +379,33 @@ public:
     }
 
     OSStatus GetPresets(CFArrayRef* outData) const override {
-        size_t count = 0;
-        const FactoryPreset* presets = factoryPresets(count);
-        fprintf(stderr, "[MasteringAU] GetPresets outData=%p count=%zu\n", (void*)outData, count);
-        CFMutableArrayRef arr = CFArrayCreateMutable(kCFAllocatorDefault, (CFIndex)count, &kCFTypeArrayCallBacks);
-        fprintf(stderr, "[MasteringAU] arr=%p\n", (void*)arr);
-        for (size_t i = 0; i < count; ++i) {
-            CFStringRef name = cachedCFString(presets[i].name);
-            SInt32 number = (SInt32)i;
-            CFNumberRef num = CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt32Type, &number);
-            const void* keys[2] = { (const void*)CFSTR(kAUPresetNameKey), (const void*)CFSTR(kAUPresetNumberKey) };
-            const void* vals[2] = { (const void*)name, (const void*)num };
-            CFDictionaryRef dict = CFDictionaryCreate(kCFAllocatorDefault, keys, vals, 2,
-                                                      &kCFTypeDictionaryKeyCallBacks,
-                                                      &kCFTypeDictionaryValueCallBacks);
-            fprintf(stderr, "[MasteringAU] preset %zu name=%s num=%p dict=%p\n", i, presets[i].name, (void*)num, (void*)dict);
-            if (dict && arr) CFArrayAppendValue(arr, dict);
-            if (dict) CFRelease(dict);
-            if (num) CFRelease(num);
-        }
-        if (outData) *outData = arr; // +1, caller owns
-        else if (arr) CFRelease(arr);
-        fprintf(stderr, "[MasteringAU] GetPresets returning arr=%p count=%ld\n", (void*)arr, arr ? (long)CFArrayGetCount(arr) : -1L);
+        // Built once and kept alive for the life of the process (magic static);
+        // every caller gets a +1 retained reference. Avoids any per-call
+        // lifecycle issue with the property dispatch.
+        static CFArrayRef sPresets = []() -> CFArrayRef {
+            size_t count = 0;
+            const FactoryPreset* presets = factoryPresets(count);
+            CFMutableArrayRef arr = CFArrayCreateMutable(kCFAllocatorDefault, (CFIndex)count,
+                                                         &kCFTypeArrayCallBacks);
+            for (size_t i = 0; i < count; ++i) {
+                CFStringRef name = cachedCFString(presets[i].name);
+                SInt32 number = (SInt32)i;
+                CFNumberRef num = CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt32Type, &number);
+                const void* keys[2] = { (const void*)CFSTR(kAUPresetNameKey),
+                                        (const void*)CFSTR(kAUPresetNumberKey) };
+                const void* vals[2] = { (const void*)name, (const void*)num };
+                CFDictionaryRef dict = CFDictionaryCreate(kCFAllocatorDefault, keys, vals, 2,
+                                                          &kCFTypeDictionaryKeyCallBacks,
+                                                          &kCFTypeDictionaryValueCallBacks);
+                if (arr && dict) CFArrayAppendValue(arr, dict);
+                if (dict) CFRelease(dict);
+                if (num) CFRelease(num);
+            }
+            fprintf(stderr, "[MasteringAU] GetPresets built arr=%p count=%ld\n", (void*)arr,
+                    arr ? (long)CFArrayGetCount(arr) : -1L);
+            return (CFArrayRef)arr;
+        }();
+        if (outData) *outData = (CFArrayRef)CFRetain(sPresets);
         return noErr;
     }
 
