@@ -68,6 +68,9 @@ static NSColor* colAmber(void)  { return [NSColor colorWithCalibratedRed:1.0 gre
     return self;
 }
 - (void)drawRect:(NSRect)dirty {
+    // Runs on the CA display thread inside the host under Rosetta: use ONLY
+    // inline NSColor literals and primitive ivars here (proven safe); calling
+    // helper functions that return NSColor* from drawRect crashed Logic.
     @try {
         NSRect r = self.bounds;
         [[NSColor colorWithCalibratedWhite:0.04 alpha:1.0] setFill];
@@ -83,14 +86,19 @@ static NSColor* colAmber(void)  { return [NSColor colorWithCalibratedRed:1.0 gre
             CGFloat span = r.size.width - 2;
             float z1 = (float)((-18.0 - minV) / (maxV - minV));
             float z2 = (float)((-6.0 - minV) / (maxV - minV));
-            [colGood setFill];  NSRectFill(NSMakeRect(x0, y0, span * z1, h));
-            [colAmber setFill]; NSRectFill(NSMakeRect(x0 + span * z1, y0, span * (z2 - z1), h));
-            [colWarn setFill];  NSRectFill(NSMakeRect(x0 + span * z2, y0, span * (1.0f - z2), h));
+            [[NSColor colorWithCalibratedRed:0.25 green:0.80 blue:0.45 alpha:1.0] setFill];
+            NSRectFill(NSMakeRect(x0, y0, span * z1, h));
+            [[NSColor colorWithCalibratedRed:1.0 green:0.75 blue:0.15 alpha:1.0] setFill];
+            NSRectFill(NSMakeRect(x0 + span * z1, y0, span * (z2 - z1), h));
+            [[NSColor colorWithCalibratedRed:1.0 green:0.42 blue:0.18 alpha:1.0] setFill];
+            NSRectFill(NSMakeRect(x0 + span * z2, y0, span * (1.0f - z2), h));
             // level marker
-            [[NSColor whiteColor] setFill];
+            [[NSColor colorWithCalibratedWhite:1.0 alpha:1.0] setFill];
             NSRectFill(NSMakeRect(x0 + w - 1, y0, 2, h));
         } else {
-            NSColor* c = (style == 1) ? colWarn() : colAccent();
+            NSColor* c = (style == 1)
+                ? [NSColor colorWithCalibratedRed:1.0 green:0.42 blue:0.18 alpha:1.0]
+                : [NSColor colorWithCalibratedRed:0.20 green:0.60 blue:1.0 alpha:1.0];
             [c setFill];
             NSRectFill(fill);
         }
@@ -107,12 +115,13 @@ static NSColor* colAmber(void)  { return [NSColor colorWithCalibratedRed:1.0 gre
 @end
 @implementation DotView
 - (void)drawRect:(NSRect)dirty {
+    // Inline color literals only in drawRect (CA display thread, Rosetta-safe).
     @try {
         NSRect r = NSInsetRect(self.bounds, 2, 2);
         NSBezierPath* p = [NSBezierPath bezierPathWithOvalInRect:r];
-        [colAccent setFill];
+        [[NSColor colorWithCalibratedRed:0.20 green:0.60 blue:1.0 alpha:1.0] setFill];
         [p fill];
-        [[NSColor whiteColor] setStroke];
+        [[NSColor colorWithCalibratedWhite:1.0 alpha:1.0] setStroke];
         [p setLineWidth: 1.5];
         [p stroke];
     } @catch (NSException* e) {}
