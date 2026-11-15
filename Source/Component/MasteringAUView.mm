@@ -247,6 +247,7 @@ static NSColor* warnColor(void) { return [NSColor colorWithCalibratedRed:1.0 gre
 #pragma mark - actions
 
 - (IBAction)controlChanged:(id)sender {
+    @try {
     uint32_t pid = (uint32_t)[sender tag];
     float v = 0.0f;
     if ([sender isKindOfClass:[NSButton class]]) {
@@ -263,9 +264,11 @@ static NSColor* warnColor(void) { return [NSColor colorWithCalibratedRed:1.0 gre
                                     [self formatValue:pid value:v]];
         [self updateValueLabel:pid value:v];
     }
+    } @catch (NSException* e) {}
 }
 
 - (IBAction)presetChanged:(NSPopUpButton*)sender {
+    @try {
     NSMenuItem* item = sender.selectedItem;
     if (!item) return;
     AUPreset p;
@@ -274,6 +277,7 @@ static NSColor* warnColor(void) { return [NSColor colorWithCalibratedRed:1.0 gre
     AudioUnitSetProperty(_au, kAudioUnitProperty_PresentPreset, kAudioUnitScope_Global, 0,
                          &p, sizeof(AUPreset));
     [self refreshControls];
+    } @catch (NSException* e) {}
 }
 
 - (void)refreshControls {
