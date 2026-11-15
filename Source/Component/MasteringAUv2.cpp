@@ -210,12 +210,6 @@ public:
     OSStatus ProcessBufferLists(AudioUnitRenderActionFlags& /*ioActionFlags*/,
                                 const AudioBufferList& inBuffer, AudioBufferList& outBuffer,
                                 UInt32 nFrames) override {
-        // Probe log (temporary diagnostics): first 20 calls + every 500th.
-        static FILE* sProbe = nullptr;
-        static int sProbeCount = 0;
-        if (!sProbe) sProbe = fopen("/tmp/masteringau_probe.log", "a");
-        const bool doProbe = sProbe && (sProbeCount < 20 || sProbeCount % 500 == 0);
-        sProbeCount++;
         try {
         const AudioStreamBasicDescription& fmt = GetOutput(0)->GetStreamFormat();
         UInt32 ch = fmt.mChannelsPerFrame;
@@ -255,32 +249,8 @@ public:
             memset(_inR.data(), 0, nFrames * sizeof(float));
         }
 
-        float maxIn = 0.0f;
-        for (UInt32 i = 0; i < nFrames; ++i) {
-            float a = _inL[i] < 0 ? -_inL[i] : _inL[i];
-            if (a > maxIn) maxIn = a;
-        }
-        if (doProbe)
-            fprintf(sProbe, "render#%d frames=%u ch=%u inBufs=%u in0ch=%u in0data=%p outBufs=%u out0ch=%u out0data=%p maxIn=%f\n",
-                    sProbeCount, (unsigned)nFrames, ch, inBuffer.mNumberBuffers,
-                    inBuffer.mNumberBuffers ? inBuffer.mBuffers[0].mNumberChannels : 0,
-                    inBuffer.mNumberBuffers ? inBuffer.mBuffers[0].mData : nullptr,
-                    outBuffer.mNumberBuffers,
-                    outBuffer.mNumberBuffers ? outBuffer.mBuffers[0].mNumberChannels : 0,
-                    outBuffer.mNumberBuffers ? outBuffer.mBuffers[0].mData : nullptr,
-                    (double)maxIn);
-
         float* io[2] = { _inL.data(), _inR.data() };
         _engine.process(io, (int)ch, (int)nFrames);
-
-        if (doProbe) {
-            float maxOut = 0.0f;
-            for (UInt32 i = 0; i < nFrames; ++i) {
-                float a = _inL[i] < 0 ? -_inL[i] : _inL[i];
-                if (a > maxOut) maxOut = a;
-            }
-            fprintf(sProbe, "render#%d maxOut=%f\n", sProbeCount, (double)maxOut);
-        }
 
         if (outBuffer.mNumberBuffers == 1 && outBuffer.mBuffers[0].mNumberChannels > 1) {
             AudioBuffer& b = outBuffer.mBuffers[0];
@@ -322,7 +292,6 @@ public:
             Globals()->SetParameter(kMeterBase + kMeterMbGR0 + b, m.mbGRDb[b], true);
         return noErr;
         } catch (...) {
-            if (sProbe) fprintf(sProbe, "render#%d EXCEPTION\n", sProbeCount);
             return noErr;
         }
     }
@@ -445,8 +414,6 @@ public:
             };
             CFMutableArrayRef arr = CFArrayCreateMutable(kCFAllocatorDefault, (CFIndex)count, &callbacks);
             for (size_t i = 0; i < count; ++i) CFArrayAppendValue(arr, &items[i]);
-            fprintf(stderr, "[MasteringAU] GetPresets built arr=%p count=%ld\n", (void*)arr,
-                    arr ? (long)CFArrayGetCount(arr) : -1L);
             return (CFArrayRef)arr;
         }();
         if (outData) *outData = (CFArrayRef)CFRetain(sPresets);
