@@ -43,30 +43,35 @@ static NSColor* warnColor(void) { return [NSColor colorWithCalibratedRed:1.0 gre
     float level;
     float minV, maxV;
     BOOL inverted;
-    NSColor* barColor;
 }
 @end
 @implementation BarView
 - (instancetype)initWithFrame:(NSRect)r {
     self = [super initWithFrame:r];
-    if (self) { minV = 0; maxV = 1; level = 0; inverted = NO;
-        barColor = accentColor(); self.wantsLayer = YES; }
+    if (self) { minV = 0; maxV = 1; level = 0; inverted = NO; }
     return self;
 }
 - (void)drawRect:(NSRect)dirty {
-    NSRect r = self.bounds;
-    [[NSColor colorWithCalibratedWhite:0.05 alpha:1.0] setFill];
-    NSRectFill(r);
-    float frac = (maxV > minV) ? (level - minV) / (maxV - minV) : 0.0f;
-    if (frac < 0) frac = 0; if (frac > 1) frac = 1;
-    if (inverted) frac = 1.0f - frac;
-    NSRect fill = NSMakeRect(r.origin.x + 1, r.origin.y + 1,
-                             (r.size.width - 2) * frac, r.size.height - 2);
-    [barColor setFill];
-    NSRectFill(fill);
-    [[NSColor colorWithCalibratedWhite:0.3 alpha:1.0] setStroke];
-    NSBezierPath* bp = [NSBezierPath bezierPathWithRect:NSInsetRect(r, 0.5, 0.5)];
-    [bp stroke];
+    // A plugin view must never let an exception escape into the host.
+    @try {
+        NSRect r = self.bounds;
+        [[NSColor colorWithCalibratedWhite:0.05 alpha:1.0] setFill];
+        NSRectFill(r);
+        float frac = (maxV > minV) ? (level - minV) / (maxV - minV) : 0.0f;
+        if (frac < 0) frac = 0; if (frac > 1) frac = 1;
+        if (inverted) frac = 1.0f - frac;
+        NSRect fill = NSMakeRect(r.origin.x + 1, r.origin.y + 1,
+                                 (r.size.width - 2) * frac, r.size.height - 2);
+        NSColor* c = inverted
+            ? [NSColor colorWithCalibratedRed:1.0 green:0.45 blue:0.2 alpha:1.0]
+            : [NSColor colorWithCalibratedRed:0.25 green:0.62 blue:1.0 alpha:1.0];
+        [c setFill];
+        NSRectFill(fill);
+        [[NSColor colorWithCalibratedWhite:0.3 alpha:1.0] setStroke];
+        [[NSBezierPath bezierPathWithRect:NSInsetRect(r, 0.5, 0.5)] stroke];
+    } @catch (NSException* e) {
+        // swallow: never crash the host from UI drawing
+    }
 }
 @end
 
@@ -103,8 +108,12 @@ static NSColor* warnColor(void) { return [NSColor colorWithCalibratedRed:1.0 gre
     _grBars = [NSMutableDictionary new];
     self.wantsLayer = YES;
     self.layer.backgroundColor = bgColor().CGColor;
-    [self buildUI];
-    [self refreshControls];
+    @try {
+        [self buildUI];
+        [self refreshControls];
+    } @catch (NSException* e) {
+        // never let UI construction throw into the host
+    }
     _timer = [NSTimer scheduledTimerWithTimeInterval:1.0/30.0 target:self
                                             selector:@selector(tick:) userInfo:nil repeats:YES];
     return self;
@@ -303,6 +312,7 @@ static NSColor* warnColor(void) { return [NSColor colorWithCalibratedRed:1.0 gre
 }
 
 - (void)tick:(NSTimer*)t {
+    @try {
     static const int meterIds[kNumMeters] = {
         kMeterMomentary, kMeterShortTerm, kMeterIntegrated, kMeterLRA, kMeterTruePeak,
         kMeterLimGR, kMeterMbGR0, kMeterMbGR1, kMeterMbGR2, kMeterMbGR3
@@ -324,6 +334,9 @@ static NSColor* warnColor(void) { return [NSColor colorWithCalibratedRed:1.0 gre
         AudioUnitGetParameter(_au, kMeterIntegrated, kAudioUnitScope_Global, 0, &v);
         lufs->level = v;
         [lufs setNeedsDisplay:YES];
+    }
+    } @catch (NSException* e) {
+        // ignore: meter refresh must never throw into the host
     }
 }
 
@@ -418,7 +431,6 @@ static NSColor* warnColor(void) { return [NSColor colorWithCalibratedRed:1.0 gre
     }
     BarView* lufsBar = [[BarView alloc] initWithFrame:NSMakeRect(mx + 12, my - 2, mw - 24, 20)];
     lufsBar->minV = -36.0f; lufsBar->maxV = 3.0f; lufsBar->level = -120.0f;
-    lufsBar->barColor = accentColor();
     [self addSubview:lufsBar];
     [_meterBars addObject:lufsBar];
     [lufsBar release];
@@ -432,7 +444,6 @@ static NSColor* warnColor(void) { return [NSColor colorWithCalibratedRed:1.0 gre
                   frame:NSMakeRect(mx + 12, my, 24, 12) size:8 bold:NO color:dimColor()];
         BarView* bar = [[BarView alloc] initWithFrame:NSMakeRect(mx + 40, my, mw - 130, 12)];
         bar->minV = 0.0f; bar->maxV = 24.0f; bar->level = 0.0f; bar->inverted = YES;
-        bar->barColor = warnColor();
         [self addSubview:bar];
         _grBars[@(grIds[i])] = bar;
         [bar release];
