@@ -4,6 +4,15 @@
 // via AudioUnitGet/SetParameter; meters are read-only parameters (ids 1000+)
 // refreshed by a 30 Hz timer. No UI code may ever throw into the host: all
 // drawing and actions are wrapped in @try/@catch.
+//
+// Layout (v3, inspired by FabFilter Pro-L 2 / iZotope Ozone meter-bridge UIs):
+//   header bar      logo, title, preset popup, BYPASS, status line
+//   meter bridge    full-width: big integrated LUFS readout, wide zone LUFS
+//                   bar with scale ticks, MOM/S/LRA/TP readouts, GR bars
+//   middle row      EQ (6-band) and MULTIBAND (4-band) detail cards
+//   bottom row      six mini cards in signal-flow order:
+//                   1 INPUT -> 2 HIGH-PASS -> 3 STEREO -> 4 SATURATION
+//                   -> 5 LIMITER -> 6 OUTPUT, each with a prominent enable
 
 #import <AppKit/AppKit.h>
 #import <AudioToolbox/AudioToolbox.h>
@@ -40,6 +49,7 @@ static NSColor* colDim(void)    { return [NSColor colorWithCalibratedWhite:0.52 
 static NSColor* colAccent(void) { return [NSColor colorWithCalibratedRed:0.20 green:0.60 blue:1.0 alpha:1.0]; }
 static NSColor* colWarn(void)   { return [NSColor colorWithCalibratedRed:1.0 green:0.42 blue:0.18 alpha:1.0]; }
 static NSColor* colGood(void)   { return [NSColor colorWithCalibratedRed:0.25 green:0.80 blue:0.45 alpha:1.0]; }
+static NSColor* colAmber(void)  { return [NSColor colorWithCalibratedRed:1.0 green:0.75 blue:0.15 alpha:1.0]; }
 
 // Horizontal meter bar. Primitive ivars only (no object ivars). style:
 // 0 = accent fill, 1 = warn fill (inverted), 2 = LUFS bar with zones.
@@ -68,14 +78,13 @@ static NSColor* colGood(void)   { return [NSColor colorWithCalibratedRed:0.25 gr
         CGFloat w = (r.size.width - 2) * frac;
         NSRect fill = NSMakeRect(r.origin.x + 1, r.origin.y + 1, w, r.size.height - 2);
         if (style == 2) {
-            // LUFS zones: -36..-18 green, -18..-6 amber, -6..+3 red (of minV..maxV)
+            // LUFS zones across minV..maxV: green up to -18, amber up to -6, red above
             CGFloat x0 = r.origin.x + 1, y0 = r.origin.y + 1, h = r.size.height - 2;
             CGFloat span = r.size.width - 2;
             float z1 = (float)((-18.0 - minV) / (maxV - minV));
             float z2 = (float)((-6.0 - minV) / (maxV - minV));
             [colGood setFill];  NSRectFill(NSMakeRect(x0, y0, span * z1, h));
-            [[NSColor colorWithCalibratedRed:1.0 green:0.75 blue:0.15 alpha:1.0] setFill];
-            NSRectFill(NSMakeRect(x0 + span * z1, y0, span * (z2 - z1), h));
+            [colAmber setFill]; NSRectFill(NSMakeRect(x0 + span * z1, y0, span * (z2 - z1), h));
             [colWarn setFill];  NSRectFill(NSMakeRect(x0 + span * z2, y0, span * (1.0f - z2), h));
             // level marker
             [[NSColor whiteColor] setFill];
@@ -101,7 +110,7 @@ static NSColor* colGood(void)   { return [NSColor colorWithCalibratedRed:0.25 gr
     @try {
         NSRect r = NSInsetRect(self.bounds, 2, 2);
         NSBezierPath* p = [NSBezierPath bezierPathWithOvalInRect:r];
-        [colAccent() setFill];
+        [colAccent setFill];
         [p fill];
         [[NSColor whiteColor] setStroke];
         [p setLineWidth: 1.5];
@@ -125,7 +134,6 @@ static NSColor* colGood(void)   { return [NSColor colorWithCalibratedRed:0.25 gr
     NSMutableDictionary* _grBars;       // @(id) -> BarView
 }
 - (instancetype)initWithFrame:(NSRect)frame audioUnit:(AudioUnit)au;
-- (CGFloat)section:(NSString*)name atY:(CGFloat)y x:(CGFloat)x w:(CGFloat)w;
 @end
 
 @implementation MasteringAUView
@@ -218,9 +226,11 @@ static NSColor* colGood(void)   { return [NSColor colorWithCalibratedRed:0.25 gr
     return [NSString stringWithFormat:@"%.2f", (double)v];
 }
 
-- (NSSlider*)addSlider:(uint32_t)pid frame:(NSRect)r showValue:(BOOL)showValue {
+// Slider cell: slider on top, small right-aligned value readout below it.
+// Cell occupies r (slider) plus 11 pt below for the value label.
+- (NSSlider*)addSliderCell:(uint32_t)pid frame:(NSRect)r {
     const ParamDesc& d = paramDescs()[pid];
-    NSSlider* s = [[NSSlider alloc] initWithFrame:r];
+    NSSlider* s = [[NSSlider alloc] initWithFrame:NSMakeRect(r.origin.x, r.origin.y, r.size.width, 15)];
     s.minValue = d.minV;
     s.maxValue = d.maxV;
     s.doubleValue = d.defV;
@@ -230,12 +240,10 @@ static NSColor* colGood(void)   { return [NSColor colorWithCalibratedRed:0.25 gr
     [s setControlSize:NSSmallControlSize];
     [self addSubview:s];
     _sliders[@(pid)] = s;
-    if (showValue) {
-        NSRect vr = NSMakeRect(r.origin.x + r.size.width + 4, r.origin.y + 1, 54, 15);
-        NSTextField* vl = [self makeLabel:@"" frame:vr size:10 bold:NO color:colText()];
-        vl.alignment = NSRightTextAlignment;
-        _valueLabels[@(pid)] = vl;
-    }
+    NSTextField* vl = [self makeLabel:@"" frame:NSMakeRect(r.origin.x, r.origin.y - 11, r.size.width, 11)
+                                 size:8 bold:NO color:colText()];
+    vl.alignment = NSRightTextAlignment;
+    _valueLabels[@(pid)] = vl;
     return [s autorelease];
 }
 
@@ -263,12 +271,6 @@ static NSColor* colGood(void)   { return [NSColor colorWithCalibratedRed:0.25 gr
     [self addSubview:p];
     _popups[@(pid)] = p;
     return [p autorelease];
-}
-
-// Labeled slider row inside a card: [name 72][slider][value 54]
-- (void)addSliderRow:(uint32_t)pid y:(CGFloat)y x:(CGFloat)x w:(CGFloat)w name:(NSString*)name {
-    [self makeLabel:name frame:NSMakeRect(x, y, 74, 15) size:10 bold:NO color:colDim()];
-    [self addSlider:pid frame:NSMakeRect(x + 78, y, w - 78 - 58, 17) showValue:YES];
 }
 
 #pragma mark - actions
@@ -370,26 +372,27 @@ static NSColor* colGood(void)   { return [NSColor colorWithCalibratedRed:0.25 gr
 
 #pragma mark - layout
 
-- (CGFloat)section:(NSString*)name atY:(CGFloat)y x:(CGFloat)x w:(CGFloat)w {
-    [self makeLabel:name frame:NSMakeRect(x + 2, y - 13, w, 14) size:9 bold:YES color:colAccent()];
-    return y - 19;
-}
-
 - (void)buildUI {
     const CGFloat W = self.bounds.size.width;
     const CGFloat H = self.bounds.size.height;
-    const CGFloat headerH = 58;
-    const CGFloat top = H - headerH;
+    const CGFloat headerH = 56;
+    const CGFloat top = H - headerH;          // 824
+    const CGFloat bridgeH = 168;
+    const CGFloat bridgeY = top - 10 - bridgeH; // 646
+    const CGFloat botH = 212;
+    const CGFloat botY = 12;
+    const CGFloat midY = botY + botH + 10;      // 234
+    const CGFloat midH = bridgeY - 10 - midY;   // 402
 
-    // ---- header ----
-    DotView* dot = [[DotView alloc] initWithFrame:NSMakeRect(16, H - 40, 24, 24)];
+    // ================= header =================
+    DotView* dot = [[DotView alloc] initWithFrame:NSMakeRect(16, H - 42, 26, 26)];
     [self addSubview:dot];
     [dot release];
-    [self makeLabel:@"MasteringAU" frame:NSMakeRect(48, H - 40, 200, 26) size:21 bold:YES color:colText()];
-    [self makeLabel:@"VIBE MASTERING" frame:NSMakeRect(50, H - 50, 150, 11) size:8 bold:YES color:colAccent()];
+    [self makeLabel:@"MasteringAU" frame:NSMakeRect(50, H - 42, 220, 28) size:22 bold:YES color:colText()];
+    [self makeLabel:@"VIBE MASTERING" frame:NSMakeRect(52, H - 52, 150, 10) size:8 bold:YES color:colAccent()];
 
-    [self makeLabel:@"PRESET" frame:NSMakeRect(262, H - 34, 46, 14) size:9 bold:YES color:colDim()];
-    _presetPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(310, H - 39, 200, 26) pullsDown:NO];
+    [self makeLabel:@"PRESET" frame:NSMakeRect(284, H - 36, 46, 12) size:9 bold:YES color:colDim()];
+    _presetPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(332, H - 41, 210, 26) pullsDown:NO];
     _presetPopup.target = self;
     _presetPopup.action = @selector(presetChanged:);
     _presetPopup.font = [NSFont systemFontOfSize:11];
@@ -409,138 +412,216 @@ static NSColor* colGood(void)   { return [NSColor colorWithCalibratedRed:0.25 gr
         }
     }
 
-    [self addCheck:P_Bypass label:@"BYPASS" frame:NSMakeRect(530, H - 38, 90, 24)];
-    _statusLabel = [self makeLabel:@"" frame:NSMakeRect(640, H - 36, W - 652, 16) size:11 bold:NO color:colDim()];
+    [self addCheck:P_Bypass label:@"BYPASS" frame:NSMakeRect(560, H - 40, 92, 24)];
+    _statusLabel = [self makeLabel:@"" frame:NSMakeRect(668, H - 38, W - 680, 16) size:11 bold:NO color:colDim()];
 
-    // ---- left column: meters card + chain card ----
-    const CGFloat lx = 12, lw = 244;
-    const CGFloat metersH = 268;
-    [self cardWithFrame:NSMakeRect(lx, top - 8 - metersH, lw, metersH) title:@"METERS · BS.1770"];
-    CGFloat my = top - 8 - metersH + metersH - 34; // below card title
-    [self makeLabel:@"INTEGRATED" frame:NSMakeRect(lx + 14, my, 110, 12) size:8 bold:YES color:colDim()];
-    _intLabel = [self makeLabel:@"-120.0 LUFS" frame:NSMakeRect(lx + 14, my - 26, lw - 28, 30) size:26 bold:YES color:colAccent()];
-    my -= 40;
-    const int meterRows[4] = { kMeterMomentary, kMeterShortTerm, kMeterLRA, kMeterTruePeak };
-    const char* meterRowNames[4] = { "Momentary", "Short-term", "LRA", "True peak" };
-    for (int i = 0; i < 4; ++i) {
-        [self makeLabel:[NSString stringWithUTF8String:meterRowNames[i]]
-                  frame:NSMakeRect(lx + 14, my, 84, 14) size:10 bold:NO color:colDim()];
-        NSTextField* vl = [self makeLabel:@"--" frame:NSMakeRect(lx + 104, my, lw - 118, 14) size:10 bold:NO color:colText()];
-        vl.alignment = NSRightTextAlignment;
-        _meterLabels[@(meterRows[i])] = vl;
-        my -= 18;
-    }
-    BarView* lufsBar = [[BarView alloc] initWithFrame:NSMakeRect(lx + 14, my - 4, lw - 28, 22)];
+    // ================= meter bridge (full width, top) =================
+    [self cardWithFrame:NSMakeRect(12, bridgeY, W - 24, bridgeH) title:@"METER BRIDGE \u00b7 BS.1770-4 LOUDNESS"];
+    const CGFloat bx0 = 28, bTop = bridgeY + bridgeH;   // card inner origin/top
+
+    // left: big integrated readout
+    [self makeLabel:@"INTEGRATED" frame:NSMakeRect(bx0, bTop - 52, 110, 11) size:8 bold:YES color:colDim()];
+    _intLabel = [self makeLabel:@"-120.0 LUFS" frame:NSMakeRect(bx0, bTop - 92, 210, 38) size:32 bold:YES color:colAccent()];
+
+    // middle: wide zone LUFS bar + scale ticks + 4 readout cells
+    const CGFloat barX = 250, barW = 640, barY = bTop - 74, barH = 26;
+    BarView* lufsBar = [[BarView alloc] initWithFrame:NSMakeRect(barX, barY, barW, barH)];
     lufsBar->minV = -36.0f; lufsBar->maxV = 3.0f; lufsBar->level = -120.0f; lufsBar->style = 2;
     [self addSubview:lufsBar];
     [_meterBars addObject:lufsBar];
     [lufsBar release];
-    my -= 30;
-    [self makeLabel:@"GAIN REDUCTION" frame:NSMakeRect(lx + 14, my, 120, 11) size:8 bold:YES color:colDim()];
-    my -= 15;
-    const int grIds[5] = { kMeterLimGR, kMeterMbGR0, kMeterMbGR1, kMeterMbGR2, kMeterMbGR3 };
-    const char* grNames[5] = { "LIM", "B1", "B2", "B3", "B4" };
-    for (int i = 0; i < 5; ++i) {
-        [self makeLabel:[NSString stringWithUTF8String:grNames[i]]
-                  frame:NSMakeRect(lx + 14, my, 24, 12) size:8 bold:NO color:colDim()];
-        BarView* bar = [[BarView alloc] initWithFrame:NSMakeRect(lx + 42, my, lw - 130, 12)];
-        bar->minV = 0.0f; bar->maxV = 24.0f; bar->level = 0.0f; bar->inverted = YES; bar->style = 1;
-        [self addSubview:bar];
-        _grBars[@(grIds[i])] = bar;
-        [bar release];
-        NSTextField* vl = [self makeLabel:@"0.0" frame:NSMakeRect(lx + lw - 82, my, 68, 12) size:8 bold:NO color:colText()];
-        vl.alignment = NSRightTextAlignment;
-        _meterLabels[@(grIds[i])] = vl;
-        my -= 15;
+    {
+        const float ticks[7] = { -36, -24, -18, -12, -6, 0, 3 };
+        for (int i = 0; i < 7; ++i) {
+            float frac = (ticks[i] + 36.0f) / 39.0f;
+            CGFloat tx = barX + barW * frac;
+            NSString* ts = [NSString stringWithFormat:@"%.0f", ticks[i]];
+            NSTextField* tl = [self makeLabel:ts frame:NSMakeRect(tx - 14, barY - 12, 28, 10) size:8 bold:NO color:colDim()];
+            tl.alignment = NSCenterTextAlignment;
+        }
+    }
+    {
+        const int cells[4] = { kMeterMomentary, kMeterShortTerm, kMeterLRA, kMeterTruePeak };
+        const char* names[4] = { "MOMENTARY", "SHORT-TERM", "LRA", "TRUE PEAK" };
+        const CGFloat cw = barW / 4.0;
+        for (int i = 0; i < 4; ++i) {
+            CGFloat cx = barX + i * cw;
+            [self makeLabel:[NSString stringWithUTF8String:names[i]]
+                      frame:NSMakeRect(cx, barY - 28, cw - 6, 10) size:8 bold:YES color:colDim()];
+            NSTextField* vl = [self makeLabel:@"--" frame:NSMakeRect(cx, barY - 48, cw - 6, 18) size:13 bold:YES color:colText()];
+            _meterLabels[@(cells[i])] = vl;
+        }
     }
 
-    const CGFloat chainTop = top - 8 - metersH - 16;
-    [self cardWithFrame:NSMakeRect(lx, 8, lw, chainTop - 8) title:@"CHAIN"];
-    CGFloat y = chainTop - 26;
-    const CGFloat cx = lx + 12, cw = lw - 24;
-    y = [self section:@"MAIN" atY:y x:cx w:cw];
-    [self addSliderRow:P_InputGain  y:y x:cx w:cw name:@"Input"]; y -= 21;
-    [self addSliderRow:P_OutputTrim y:y x:cx w:cw name:@"Output"]; y -= 23;
-
-    y = [self section:@"HIGH-PASS" atY:y x:cx w:cw];
-    [self addCheck:P_HpEnable label:@"HP on" frame:NSMakeRect(cx, y - 2, cw, 19)]; y -= 21;
-    [self addSliderRow:P_HpFreq y:y x:cx w:cw name:@"HP freq"]; y -= 23;
-
-    y = [self section:@"STEREO" atY:y x:cx w:cw];
-    [self addCheck:P_MonoLowEnable label:@"Mono low" frame:NSMakeRect(cx, y - 2, cw, 19)]; y -= 21;
-    [self addSliderRow:P_MonoLowFreq y:y x:cx w:cw name:@"Mono freq"]; y -= 21;
-    [self addSliderRow:P_Width y:y x:cx w:cw name:@"Width"]; y -= 23;
-
-    y = [self section:@"SATURATION" atY:y x:cx w:cw];
-    [self addCheck:P_SatEnable label:@"Sat on" frame:NSMakeRect(cx, y - 2, cw, 19)]; y -= 21;
-    [self addSliderRow:P_SatDrive y:y x:cx w:cw name:@"Drive"]; y -= 21;
-    [self makeLabel:@"Mode" frame:NSMakeRect(cx, y, 74, 15) size:10 bold:NO color:colDim()];
-    [self addPopup:P_SatMode choices:kSatModeChoices count:3 frame:NSMakeRect(cx + 78, y - 4, 120, 22)]; y -= 25;
-    [self addSliderRow:P_SatMix y:y x:cx w:cw name:@"Mix"]; y -= 23;
-
-    y = [self section:@"LIMITER" atY:y x:cx w:cw];
-    [self addCheck:P_LimEnable label:@"Lim on" frame:NSMakeRect(cx, y - 2, cw, 19)]; y -= 21;
-    [self addSliderRow:P_LimCeiling y:y x:cx w:cw name:@"Ceiling"]; y -= 21;
-    [self addSliderRow:P_LimLookahead y:y x:cx w:cw name:@"Lookahead"]; y -= 21;
-    [self addSliderRow:P_LimRelease y:y x:cx w:cw name:@"Release"]; y -= 23;
-
-    y = [self section:@"OUTPUT" atY:y x:cx w:cw];
-    [self addCheck:P_DitherEnable label:@"Dither" frame:NSMakeRect(cx, y - 2, cw, 19)]; y -= 21;
-
-    // ---- middle column: EQ card ----
-    const CGFloat mx = 268, mw = 484;
-    [self cardWithFrame:NSMakeRect(mx, 8, mw, top - 16) title:@"EQ · 6 BAND"];
-    CGFloat ey = top - 40;
-    // column headers
-    const char* eqCols[3] = { "Freq", "Gain", "Q" };
-    [self makeLabel:@"Band" frame:NSMakeRect(mx + 14, ey, 30, 11) size:8 bold:YES color:colDim()];
-    [self makeLabel:@"Type" frame:NSMakeRect(mx + 78, ey, 88, 11) size:8 bold:YES color:colDim()];
-    for (int c = 0; c < 3; ++c)
-        [self makeLabel:[NSString stringWithUTF8String:eqCols[c]]
-                  frame:NSMakeRect(mx + 176 + c * 100, ey, 92, 11) size:8 bold:YES color:colDim()];
-    ey -= 18;
-    for (int b = 0; b < kNumEqBands; ++b) {
-        CGFloat bx = mx + 14;
-        [self makeLabel:[NSString stringWithFormat:@"EQ%d", b + 1]
-                  frame:NSMakeRect(bx, ey + 3, 28, 15) size:11 bold:YES color:colAccent()];
-        [self addCheck:eqParam(b, EqEnable) label:@"" frame:NSMakeRect(bx + 36, ey + 1, 30, 17)];
-        [self addPopup:eqParam(b, EqType) choices:kEqTypeChoices count:5 frame:NSMakeRect(bx + 72, ey - 2, 92, 22)];
-        [self addSlider:eqParam(b, EqFreq) frame:NSMakeRect(bx + 172, ey, 94, 18) showValue:NO];
-        [self addSlider:eqParam(b, EqGain) frame:NSMakeRect(bx + 272, ey, 94, 18) showValue:NO];
-        [self addSlider:eqParam(b, EqQ)    frame:NSMakeRect(bx + 372, ey, 94, 18) showValue:NO];
-        ey -= 34;
+    // right: gain reduction bars LIM + B1..B4
+    const CGFloat grX = 912, grW = W - 24 - grX - 12;
+    [self makeLabel:@"GAIN REDUCTION" frame:NSMakeRect(grX, bTop - 52, 180, 11) size:8 bold:YES color:colDim()];
+    {
+        const int grIds[5] = { kMeterLimGR, kMeterMbGR0, kMeterMbGR1, kMeterMbGR2, kMeterMbGR3 };
+        const char* grNames[5] = { "LIM", "B1", "B2", "B3", "B4" };
+        CGFloat gy = bTop - 70;
+        for (int i = 0; i < 5; ++i) {
+            [self makeLabel:[NSString stringWithUTF8String:grNames[i]]
+                      frame:NSMakeRect(grX, gy, 26, 11) size:8 bold:NO color:colDim()];
+            BarView* bar = [[BarView alloc] initWithFrame:NSMakeRect(grX + 30, gy, grW - 116, 11)];
+            bar->minV = 0.0f; bar->maxV = 24.0f; bar->level = 0.0f; bar->inverted = YES; bar->style = 1;
+            [self addSubview:bar];
+            _grBars[@(grIds[i])] = bar;
+            [bar release];
+            NSTextField* vl = [self makeLabel:@"0.0" frame:NSMakeRect(grX + grW - 80, gy, 80, 11) size:9 bold:NO color:colText()];
+            vl.alignment = NSRightTextAlignment;
+            _meterLabels[@(grIds[i])] = vl;
+            gy -= 15;
+        }
     }
 
-    // ---- right column: multiband card ----
-    const CGFloat rx = 764, rw = W - rx - 12;
-    [self cardWithFrame:NSMakeRect(rx, 8, rw, top - 16) title:@"MULTIBAND COMPRESSOR · 4 BAND"];
-    CGFloat by = top - 40;
-    [self makeLabel:@"Crossovers" frame:NSMakeRect(rx + 14, by, 90, 13) size:9 bold:YES color:colDim()];
-    by -= 6;
-    const char* xoNames[3] = { "X1", "X2", "X3" };
-    const uint32_t xoIds[3] = { P_MbXover1, P_MbXover2, P_MbXover3 };
-    for (int i = 0; i < 3; ++i) {
-        CGFloat cxp = rx + 14 + i * ((rw - 28) / 3.0);
-        [self makeLabel:[NSString stringWithUTF8String:xoNames[i]]
-                  frame:NSMakeRect(cxp, by - 13, 30, 11) size:8 bold:NO color:colDim()];
-        [self addSlider:xoIds[i] frame:NSMakeRect(cxp, by, (rw - 28) / 3.0 - 10, 18) showValue:NO];
+    // ================= middle row: EQ + MULTIBAND =================
+    const CGFloat eqX = 12, eqW = 620;
+    const CGFloat mbX = eqX + eqW + 8, mbW = W - 12 - mbX;
+    [self cardWithFrame:NSMakeRect(eqX, midY, eqW, midH) title:@"EQ \u00b7 6 BAND"];
+    [self cardWithFrame:NSMakeRect(mbX, midY, mbW, midH) title:@"MULTIBAND COMPRESSOR \u00b7 4 BAND"];
+
+    // ---- EQ card ----
+    {
+        const CGFloat x0 = eqX + 14;
+        const CGFloat hdrY = midY + midH - 40;
+        [self makeLabel:@"Band" frame:NSMakeRect(x0, hdrY, 30, 11) size:8 bold:YES color:colDim()];
+        [self makeLabel:@"Type" frame:NSMakeRect(x0 + 64, hdrY, 100, 11) size:8 bold:YES color:colDim()];
+        const char* eqCols[3] = { "FREQ", "GAIN", "Q" };
+        const CGFloat cellW = 140, cellX0 = x0 + 172;
+        for (int c = 0; c < 3; ++c)
+            [self makeLabel:[NSString stringWithUTF8String:eqCols[c]]
+                      frame:NSMakeRect(cellX0 + c * cellW, hdrY, cellW, 11) size:8 bold:YES color:colDim()];
+        CGFloat ey = hdrY - 26;
+        for (int b = 0; b < kNumEqBands; ++b) {
+            [self makeLabel:[NSString stringWithFormat:@"EQ%d", b + 1]
+                      frame:NSMakeRect(x0, ey + 3, 30, 15) size:11 bold:YES color:colAccent()];
+            [self addCheck:eqParam(b, EqEnable) label:@"" frame:NSMakeRect(x0 + 34, ey + 1, 26, 16)];
+            [self addPopup:eqParam(b, EqType) choices:kEqTypeChoices count:5
+                     frame:NSMakeRect(x0 + 64, ey - 3, 100, 22)];
+            [self addSliderCell:eqParam(b, EqFreq) frame:NSMakeRect(cellX0 + 0 * cellW, ey, cellW, 15)];
+            [self addSliderCell:eqParam(b, EqGain) frame:NSMakeRect(cellX0 + 1 * cellW, ey, cellW, 15)];
+            [self addSliderCell:eqParam(b, EqQ)    frame:NSMakeRect(cellX0 + 2 * cellW, ey, cellW, 15)];
+            ey -= 46;
+        }
     }
-    by -= 36;
-    const char* mbCols[5] = { "Thr", "Ratio", "Atk", "Rel", "Makeup" };
-    [self makeLabel:@"Band" frame:NSMakeRect(rx + 14, by, 30, 11) size:8 bold:YES color:colDim()];
-    for (int c = 0; c < 5; ++c)
-        [self makeLabel:[NSString stringWithUTF8String:mbCols[c]]
-                  frame:NSMakeRect(rx + 78 + c * 76, by, 72, 11) size:8 bold:YES color:colDim()];
-    by -= 18;
-    for (int b = 0; b < kNumMbBands; ++b) {
-        CGFloat bx = rx + 14;
-        [self makeLabel:[NSString stringWithFormat:@"B%d", b + 1]
-                  frame:NSMakeRect(bx, by + 3, 28, 15) size:11 bold:YES color:colWarn()];
-        [self addCheck:mbParam(b, MbEnable) label:@"" frame:NSMakeRect(bx + 36, by + 1, 30, 17)];
-        const uint32_t fields[5] = { MbThresh, MbRatio, MbAttack, MbRelease, MbMakeup };
-        for (int f = 0; f < 5; ++f)
-            [self addSlider:mbParam(b, fields[f]) frame:NSMakeRect(bx + 74 + f * 76, by, 72, 18) showValue:NO];
-        by -= 30;
+
+    // ---- MULTIBAND card ----
+    {
+        const CGFloat x0 = mbX + 14;
+        const CGFloat iw = mbW - 28;
+        const CGFloat hdrY = midY + midH - 40;
+        [self makeLabel:@"CROSSOVERS" frame:NSMakeRect(x0, hdrY, 90, 11) size:8 bold:YES color:colDim()];
+        const uint32_t xoIds[3] = { P_MbXover1, P_MbXover2, P_MbXover3 };
+        const char* xoNames[3] = { "X1", "X2", "X3" };
+        const CGFloat xoW = (iw - 16) / 3.0;
+        for (int i = 0; i < 3; ++i) {
+            CGFloat cx = x0 + i * (xoW + 8);
+            [self makeLabel:[NSString stringWithUTF8String:xoNames[i]]
+                      frame:NSMakeRect(cx, hdrY - 26, 30, 10) size:8 bold:NO color:colDim()];
+            [self addSliderCell:xoIds[i] frame:NSMakeRect(cx, hdrY - 40, xoW, 15)];
+        }
+        const CGFloat colHdrY = hdrY - 72;
+        const CGFloat cellW = 106, cellX0 = x0 + 62;
+        [self makeLabel:@"Band" frame:NSMakeRect(x0, colHdrY, 30, 11) size:8 bold:YES color:colDim()];
+        const char* mbCols[5] = { "THR", "RATIO", "ATK", "REL", "MAKEUP" };
+        for (int c = 0; c < 5; ++c)
+            [self makeLabel:[NSString stringWithUTF8String:mbCols[c]]
+                      frame:NSMakeRect(cellX0 + c * cellW, colHdrY, cellW, 11) size:8 bold:YES color:colDim()];
+        CGFloat by = colHdrY - 26;
+        for (int b = 0; b < kNumMbBands; ++b) {
+            [self makeLabel:[NSString stringWithFormat:@"B%d", b + 1]
+                      frame:NSMakeRect(x0, by + 3, 30, 15) size:11 bold:YES color:colWarn()];
+            [self addCheck:mbParam(b, MbEnable) label:@"" frame:NSMakeRect(x0 + 34, by + 1, 26, 16)];
+            const uint32_t fields[5] = { MbThresh, MbRatio, MbAttack, MbRelease, MbMakeup };
+            for (int f = 0; f < 5; ++f)
+                [self addSliderCell:mbParam(b, fields[f]) frame:NSMakeRect(cellX0 + f * cellW, by, cellW, 15)];
+            by -= 46;
+        }
+    }
+
+    // ================= bottom row: signal-flow mini cards =================
+    const CGFloat mcW = 202, mcGap = 8, mcX0 = 12;
+    const char* mcTitles[6] = { "1 \u00b7 INPUT", "2 \u00b7 HIGH-PASS", "3 \u00b7 STEREO",
+                                "4 \u00b7 SATURATION", "5 \u00b7 LIMITER", "6 \u00b7 OUTPUT" };
+    for (int i = 0; i < 6; ++i) {
+        CGFloat cx = mcX0 + i * (mcW + mcGap);
+        [self cardWithFrame:NSMakeRect(cx, botY, mcW, botH)
+                      title:[NSString stringWithUTF8String:mcTitles[i]]];
+        if (i < 5) {
+            NSTextField* ar = [self makeLabel:@"\u2192" frame:NSMakeRect(cx + mcW - 1, botY + botH / 2 - 7, 10, 14)
+                                         size:11 bold:YES color:colDim()];
+            ar.alignment = NSCenterTextAlignment;
+        }
+    }
+    // helper locals for mini-card content
+    // card content top: title row then controls
+    // card 1: INPUT — input gain
+    {
+        CGFloat cx = mcX0, ix = cx + 10, iw = mcW - 20;
+        CGFloat y = botY + botH - 40;
+        [self makeLabel:@"Input gain" frame:NSMakeRect(ix, y, 70, 12) size:8 bold:NO color:colDim()];
+        [self addSliderCell:P_InputGain frame:NSMakeRect(ix + 66, y + 1, iw - 66, 15)];
+    }
+    // card 2: HIGH-PASS — prominent enable + freq
+    {
+        CGFloat cx = mcX0 + 1 * (mcW + mcGap), ix = cx + 10, iw = mcW - 20;
+        CGFloat y = botY + botH - 40;
+        [self addCheck:P_HpEnable label:@"ENABLED" frame:NSMakeRect(ix, y, iw, 20)];
+        y -= 30;
+        [self makeLabel:@"Cutoff" frame:NSMakeRect(ix, y, 70, 12) size:8 bold:NO color:colDim()];
+        [self addSliderCell:P_HpFreq frame:NSMakeRect(ix + 66, y + 1, iw - 66, 15)];
+    }
+    // card 3: STEREO — mono low enable + freq + width
+    {
+        CGFloat cx = mcX0 + 2 * (mcW + mcGap), ix = cx + 10, iw = mcW - 20;
+        CGFloat y = botY + botH - 40;
+        [self addCheck:P_MonoLowEnable label:@"MONO LOW" frame:NSMakeRect(ix, y, iw, 20)];
+        y -= 30;
+        [self makeLabel:@"Mono freq" frame:NSMakeRect(ix, y, 70, 12) size:8 bold:NO color:colDim()];
+        [self addSliderCell:P_MonoLowFreq frame:NSMakeRect(ix + 66, y + 1, iw - 66, 15)];
+        y -= 30;
+        [self makeLabel:@"Width" frame:NSMakeRect(ix, y, 70, 12) size:8 bold:NO color:colDim()];
+        [self addSliderCell:P_Width frame:NSMakeRect(ix + 66, y + 1, iw - 66, 15)];
+    }
+    // card 4: SATURATION — enable + drive + mode + mix
+    {
+        CGFloat cx = mcX0 + 3 * (mcW + mcGap), ix = cx + 10, iw = mcW - 20;
+        CGFloat y = botY + botH - 40;
+        [self addCheck:P_SatEnable label:@"ENABLED" frame:NSMakeRect(ix, y, iw, 20)];
+        y -= 30;
+        [self makeLabel:@"Drive" frame:NSMakeRect(ix, y, 70, 12) size:8 bold:NO color:colDim()];
+        [self addSliderCell:P_SatDrive frame:NSMakeRect(ix + 66, y + 1, iw - 66, 15)];
+        y -= 30;
+        [self makeLabel:@"Mode" frame:NSMakeRect(ix, y, 70, 12) size:8 bold:NO color:colDim()];
+        [self addPopup:P_SatMode choices:kSatModeChoices count:3 frame:NSMakeRect(ix + 66, y - 4, iw - 66, 22)];
+        y -= 30;
+        [self makeLabel:@"Mix" frame:NSMakeRect(ix, y, 70, 12) size:8 bold:NO color:colDim()];
+        [self addSliderCell:P_SatMix frame:NSMakeRect(ix + 66, y + 1, iw - 66, 15)];
+    }
+    // card 5: LIMITER — enable + ceiling + lookahead + release
+    {
+        CGFloat cx = mcX0 + 4 * (mcW + mcGap), ix = cx + 10, iw = mcW - 20;
+        CGFloat y = botY + botH - 40;
+        [self addCheck:P_LimEnable label:@"ENABLED" frame:NSMakeRect(ix, y, iw, 20)];
+        y -= 30;
+        [self makeLabel:@"Ceiling" frame:NSMakeRect(ix, y, 70, 12) size:8 bold:NO color:colDim()];
+        [self addSliderCell:P_LimCeiling frame:NSMakeRect(ix + 66, y + 1, iw - 66, 15)];
+        y -= 30;
+        [self makeLabel:@"Lookahead" frame:NSMakeRect(ix, y, 70, 12) size:8 bold:NO color:colDim()];
+        [self addSliderCell:P_LimLookahead frame:NSMakeRect(ix + 66, y + 1, iw - 66, 15)];
+        y -= 30;
+        [self makeLabel:@"Release" frame:NSMakeRect(ix, y, 70, 12) size:8 bold:NO color:colDim()];
+        [self addSliderCell:P_LimRelease frame:NSMakeRect(ix + 66, y + 1, iw - 66, 15)];
+    }
+    // card 6: OUTPUT — output trim + dither
+    {
+        CGFloat cx = mcX0 + 5 * (mcW + mcGap), ix = cx + 10, iw = mcW - 20;
+        CGFloat y = botY + botH - 40;
+        [self addCheck:P_DitherEnable label:@"DITHER" frame:NSMakeRect(ix, y, iw, 20)];
+        y -= 30;
+        [self makeLabel:@"Output trim" frame:NSMakeRect(ix, y, 70, 12) size:8 bold:NO color:colDim()];
+        [self addSliderCell:P_OutputTrim frame:NSMakeRect(ix + 66, y + 1, iw - 66, 15)];
     }
 }
 
@@ -553,8 +634,8 @@ static NSColor* colGood(void)   { return [NSColor colorWithCalibratedRed:0.25 gr
 - (unsigned)interfaceVersion { return 0; }
 - (NSString*)description { return @"MasteringAU"; }
 - (NSView*)uiViewForAudioUnit:(AudioUnit)inAudioUnit withSize:(NSSize)inPreferredSize {
-    CGFloat w = MAX(inPreferredSize.width, 1260.0);
-    CGFloat h = MAX(inPreferredSize.height, 760.0);
+    CGFloat w = MAX(inPreferredSize.width, 1280.0);
+    CGFloat h = MAX(inPreferredSize.height, 880.0);
     MasteringAUView* v = [[MasteringAUView alloc] initWithFrame:NSMakeRect(0, 0, w, h) audioUnit:inAudioUnit];
     return [v autorelease];
 }

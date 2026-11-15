@@ -40,13 +40,13 @@ Source/Plugin/    AUv3 wrapper for Logic (macOS-only, needs Xcode)
   MasteringAU.mm  AUAudioUnit subclass: buses, parameter tree (incl. read-only
                   "Meters" parameters), factory presets, internalRenderBlock
                   with pullInputBlock driving the engine, latency
-  Info.plist      AUv3 component registration (aufx / MstA / Vibe)
+  Info.plist      AUv3 component registration (aufx / MstB / Vibe)
 Source/Component/ AUv2 component (MasteringAU.component) + custom Cocoa UI
   MasteringAUv2.cpp    ausdk::AUEffectBase subclass: buses, parameters, presets,
                        meters, latency, CocoaUI property; entry via
                        AUSDK_COMPONENT_ENTRY -> MasteringAUComponentFactory
   MasteringAUView.mm   NSView UI (AUCocoaUIBase factory) bound to the params
-  Info.plist           AUv2 component registration (factoryFunction, aufx/MstA/Vibe)
+  Info.plist           AUv2 component registration (factoryFunction, aufx/MstB/Vibe)
   AudioUnitSDK/        Apple's AUPublic C++ SDK (vendored from apple/AudioUnitSDK;
                        Apple no longer ships these headers in the OS SDK)
 project.yml       XcodeGen spec for the .appex, .component and host targets
@@ -119,7 +119,7 @@ Open Logic Pro → Audio FX slot on a stereo bus/track →
 Loud −9 LUFS, Air & Warmth, Vinyl Prep. The plugin reports its latency
 (limiter lookahead + saturator FIR delay) to the host for compensation.
 
-Component: type `aufx` (effect), subtype `MstA`, manufacturer `Vibe`,
+Component: type `aufx` (effect), subtype `MstB`, manufacturer `Vibe`,
 stereo or mono in/out, float32, any sample rate, processes in place.
 
 ## AUv2 component (MasteringAU.component) — recommended for Logic Pro
@@ -137,6 +137,11 @@ open MasteringAU.xcodeproj
 # Product ▸ Build, target MasteringAUComponent (scheme MasteringAUComponent)
 ```
 
+The component target builds a **universal binary (arm64 + x86_64)** on
+purpose: Logic Pro on this machine runs under Rosetta (x86_64), so an
+arm64-only component would be registered by `auval` but invisible in Logic.
+Do not set `ONLY_ACTIVE_ARCH: YES` for this target.
+
 Install and rescan (once per build; if Logic ever crashes on *any* plugin
 select, run the cleanup below first):
 
@@ -144,7 +149,7 @@ select, run the cleanup below first):
 cp -R build/Release/MasteringAU.component ~/Library/Audio/Plug-Ins/Components/
 rm -rf ~/Library/Caches/AudioUnitCache
 killall -9 AudioComponentRegistrar
-auval -v aufx MstA Vibe     # must print AU VALIDATION SUCCEEDED before Logic
+auval -v aufx MstB Vibe     # must print AU VALIDATION SUCCEEDED before Logic
 ```
 
 Cleanup (removes every trace of the plugin and rebuilds the AU cache):
@@ -158,12 +163,15 @@ killall -9 AudioComponentRegistrar pluginkitd
 lsregister -kill -r -domain local -domain user
 ```
 
-In Logic: **Audio FX ▸ Vibe ▸ MasteringAU**. The custom window shows live
-BS.1770 meters (integrated/momentary/short-term LUFS, LRA, true peak, limiter
-and per-band gain reduction), the chain sections (input/output, high-pass,
-stereo, saturation, limiter, dither), a 6-band EQ and the 4-band multiband
-compressor. Same five factory presets. Component codes are unchanged
-(`aufx` / `MstA` / `Vibe`), so install only one shell at a time.
+In Logic: **Audio FX ▸ Vibe ▸ MasteringAU**. The custom window (1280×880) is
+laid out like modern mastering suites (Pro-L 2 / Ozone style): a full-width
+**meter bridge** on top (big integrated-LUFS readout, zone-gradient LUFS bar
+with scale ticks, momentary/short-term/LRA/true-peak readouts, LIM + B1–B4
+gain-reduction bars), EQ and multiband detail cards in the middle, and six
+mini cards along the bottom in **signal-flow order** (1 Input → 2 High-pass →
+3 Stereo → 4 Saturation → 5 Limiter → 6 Output), each with a prominent enable
+toggle. Same five factory presets. Component codes are unchanged
+(`aufx` / `MstB` / `Vibe`), so install only one shell at a time.
 
 ## Notes / design decisions
 
