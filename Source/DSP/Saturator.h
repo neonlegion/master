@@ -23,12 +23,17 @@ public:
     }
 
     void configure(bool enabled, double driveDb, int mode, double mixPercent) {
+        // Called every block by the engine: only touch filter state when the
+        // stage is (re)enabled. Resetting the oversampler/delay on every block
+        // wiped the filter history each callback and caused crackling.
+        const bool wasEnabled = enabled_;
         enabled_ = enabled;
         drive_ = dbToLin(driveDb);
         mode_ = mode;
         mix_ = clampd(mixPercent * 0.01, 0.0, 1.0);
-        if (enabled_) {
+        if (enabled_ && !wasEnabled) {
             dryDelay_.resize(kLatency);
+            dryDelay_.reset();
             os_.reset();
         }
     }

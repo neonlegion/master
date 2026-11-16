@@ -17,9 +17,11 @@ inline const FactoryPreset* factoryPresets(size_t& count) {
             return v;
         }() },
         { "Streaming -14 LUFS", [] {
+            // Tuned offline: on a ~-7 LUFS pre-master this lands at about
+            // -14 LUFS integrated with true peak well below the ceiling.
             ParamValues v;
             v.set(P_LimCeiling, -1.0f);
-            v.set(P_LimRelease, 80.0f);
+            v.set(P_LimRelease, 100.0f);
             v.set(eqParam(0, EqEnable), 1.0f);
             v.set(eqParam(0, EqType), (float)EqLowShelf);
             v.set(eqParam(0, EqFreq), 70.0f);
@@ -28,15 +30,13 @@ inline const FactoryPreset* factoryPresets(size_t& count) {
             v.set(eqParam(5, EqType), (float)EqHighShelf);
             v.set(eqParam(5, EqFreq), 11000.0f);
             v.set(eqParam(5, EqGain), 1.5f);
-            v.set(mbParam(0, MbEnable), 1.0f);
-            v.set(mbParam(0, MbThresh), -20.0f);
-            v.set(mbParam(0, MbRatio), 2.0f);
-            v.set(mbParam(0, MbRelease), 200.0f);
-            v.set(mbParam(3, MbEnable), 1.0f);
-            v.set(mbParam(3, MbThresh), -22.0f);
-            v.set(mbParam(3, MbRatio), 3.0f);
-            v.set(mbParam(3, MbAttack), 5.0f);
-            v.set(mbParam(3, MbRelease), 120.0f);
+            for (int b = 0; b < kNumMbBands; ++b) {
+                v.set(mbParam(b, MbEnable), 1.0f);
+                v.set(mbParam(b, MbThresh), -26.0f);
+                v.set(mbParam(b, MbRatio), b == 0 ? 3.0f : 4.0f);
+                v.set(mbParam(b, MbAttack), 5.0f);
+                v.set(mbParam(b, MbRelease), b == 0 ? 250.0f : 150.0f);
+            }
             return v;
         }() },
         { "Loud -9 LUFS", [] {

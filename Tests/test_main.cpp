@@ -12,6 +12,7 @@
 #include "../Source/DSP/LoudnessMeter.h"
 #include "../Source/DSP/Analyzer.h"
 #include "../Source/DSP/Engine.h"
+#include "../Source/DSP/Presets.h"
 
 #include <cstdio>
 #include <cmath>
@@ -728,6 +729,88 @@ static void testEngineFullChain() {
     check(e.latencySamples() > 0.0, "latency reported (lookahead + sat)");
 }
 
+static void testSaturatorBlockContinuity() {
+    printf("[saturator: per-block configure must not crackle]\n");
+    // The engine calls Saturator::configure on every block; it must not reset
+    // filter state each time (that wiped the oversampler history and caused
+    // audible crackling in the host). Regression test: run through the engine
+    // in small blocks with saturation on and demand a smooth, bounded output.
+    const double fs = 48000.0;
+    MasteringEngine e;
+    e.setSampleRate(fs);
+    e.store().set(P_LimEnable, 0.0f);
+    e.store().set(P_DitherEnable, 0.0f);
+    e.store().set(P_SatEnable, 1.0f);
+    e.store().set(P_SatDrive, 12.0f);
+    e.store().set(P_SatMode, (float)SatTape);
+    e.store().set(P_SatMix, 100.0f);
+    const int n = (int)(2 * fs);
+    std::vector<float> l(n), r(n);
+    for (int i = 0; i < n; ++i) {
+        double t = i / fs;
+        l[i] = (float)(0.9 * std::sin(2 * kPi * 1000 * t));
+        r[i] = l[i];
+    }
+    const int block = 512;
+    double peak = 0, maxStep = 0;
+    float prev = 0;
+    for (int i = 0; i < n; i += block) {
+        float* io[2] = {l.data() + i, r.data() + i};
+        e.process(io, 2, std::min(block, n - i));
+        for (int j = i; j < i + std::min(block, n - i); ++j) {
+            peak = std::max(peak, (double)std::fabs(l[j]));
+            if (j > 2000) maxStep = std::max(maxStep, (double)std::fabs(l[j] - prev));
+            prev = l[j];
+        }
+    }
+    printf("  sat on, 512-blocks: peak %.3f, max sample step %.4f (sine would be %.4f)\n",
+           peak, maxStep, 0.9 * 2 * kPi * 1000.0 / fs);
+    check(allFinite(l), "sat multi-block output finite");
+    check(peak <= 1.0 + 1e-3, "sat multi-block output bounded");
+    check(maxStep < 0.5, "sat multi-block output smooth (no crackle)");
+}
+
+static void testPresetTargets() {
+    printf("[factory presets: loudness targets]\n");
+    const double fs = 48000.0;
+    // loud pre-master, ~-7 LUFS integrated
+    const int n = (int)(8 * fs);
+    std::vector<float> l0(n), r0(n);
+    std::mt19937 rng(7);
+    std::normal_distribution<float> nd(0.0f, 1.0f);
+    for (int i = 0; i < n; ++i) {
+        double t = i / fs;
+        l0[i] = (float)(0.35 * std::sin(2 * kPi * 220 * t) + 0.25 * std::sin(2 * kPi * 1000 * t) + 0.08 * nd(rng));
+        r0[i] = (float)(0.35 * std::sin(2 * kPi * 220 * t) + 0.25 * std::sin(2 * kPi * 1500 * t) + 0.08 * nd(rng));
+    }
+    size_t count = 0;
+    const FactoryPreset* presets = factoryPresets(count);
+    check(count == 5, "five factory presets");
+    auto runPreset = [&](const ParamValues& v, double& integ, double& tp) {
+        MasteringEngine e;
+        e.setSampleRate(fs);
+        for (uint32_t i = 0; i < P_Count; ++i) e.store().set(i, v.v[i]);
+        e.reset();
+        std::vector<float> l = l0, r = r0;
+        const int block = 512;
+        for (int i = 0; i < n; i += block) {
+            float* io[2] = {l.data() + i, r.data() + i};
+            e.process(io, 2, std::min(block, n - i));
+        }
+        integ = e.meters().integratedLUFS;
+        tp = e.meters().truePeakDbTP;
+    };
+    double integ, tp;
+    runPreset(presets[1].values, integ, tp); // Streaming -14
+    printf("  Streaming -14 LUFS -> %.2f LUFS, TP %.2f dBTP\n", integ, tp);
+    checkNear(integ, -14.0, 1.5, "Streaming preset hits -14 LUFS (+/-1.5)");
+    check(tp <= -1.0 + 0.6, "Streaming TP within ceiling");
+    runPreset(presets[2].values, integ, tp); // Loud -9
+    printf("  Loud -9 LUFS -> %.2f LUFS, TP %.2f dBTP\n", integ, tp);
+    checkNear(integ, -9.0, 1.5, "Loud preset hits -9 LUFS (+/-1.5)");
+    check(tp <= -0.5 + 0.6, "Loud TP within ceiling");
+}
+
 static void testFuzz() {
     printf("[fuzz: random params, random input, multiple sample rates]\n");
     for (double fs : {44100.0, 48000.0, 96000.0}) {
@@ -806,6 +889,8 @@ int main() {
     testAnalyzer();
     testEngineBypassAndStages();
     testEngineFullChain();
+    testSaturatorBlockContinuity();
+    testPresetTargets();
     testFuzz();
     testSmoothing();
     printf("=== %d passed, %d failed ===\n", g_pass, g_fail);
