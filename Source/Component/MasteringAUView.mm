@@ -5,19 +5,14 @@
 // refreshed by a 30 Hz timer. No UI code may ever throw into the host: all
 // drawing and actions are wrapped in @try/@catch.
 //
-// Layout (v4, Pro-L 2 / Ozone style, fluid/resizable):
+// Layout (v3, inspired by FabFilter Pro-L 2 / iZotope Ozone meter-bridge UIs):
 //   header bar      logo, title, preset popup, BYPASS, status line
 //   meter bridge    full-width: big integrated LUFS readout, wide zone LUFS
 //                   bar with scale ticks, MOM/S/LRA/TP readouts, GR bars
-//   middle row      EQ (6-band) and MULTIBAND (4-band) detail cards (sliders)
-//   bottom row      six mini cards in signal-flow order with rotary knobs:
+//   middle row      EQ (6-band) and MULTIBAND (4-band) detail cards
+//   bottom row      six mini cards in signal-flow order:
 //                   1 INPUT -> 2 HIGH-PASS -> 3 STEREO -> 4 SATURATION
 //                   -> 5 LIMITER -> 6 OUTPUT, each with a prominent enable
-//
-// Host-safety rules (hard-won under Rosetta): views that draw on the CA
-// display thread (BarView, DotView, KnobView) use ONLY primitive ivars and
-// inline NSColor literals in drawRect — never helper functions returning
-// objects, never object ivars.
 
 #import <AppKit/AppKit.h>
 #import <AudioToolbox/AudioToolbox.h>
@@ -45,8 +40,7 @@ enum {
     kNumMeters = 10
 };
 
-// Palette — build-time code only (labels, cards, buttons). Never call these
-// from drawRect on the display thread.
+// Palette
 static NSColor* colBg(void)     { return [NSColor colorWithCalibratedWhite:0.070 alpha:1.0]; }
 static NSColor* colCard(void)   { return [NSColor colorWithCalibratedWhite:0.115 alpha:1.0]; }
 static NSColor* colCardEdge(void){ return [NSColor colorWithCalibratedWhite:0.24 alpha:1.0]; }
@@ -54,8 +48,10 @@ static NSColor* colText(void)   { return [NSColor colorWithCalibratedWhite:0.90 
 static NSColor* colDim(void)    { return [NSColor colorWithCalibratedWhite:0.52 alpha:1.0]; }
 static NSColor* colAccent(void) { return [NSColor colorWithCalibratedRed:0.20 green:0.60 blue:1.0 alpha:1.0]; }
 static NSColor* colWarn(void)   { return [NSColor colorWithCalibratedRed:1.0 green:0.42 blue:0.18 alpha:1.0]; }
+static NSColor* colGood(void)   { return [NSColor colorWithCalibratedRed:0.25 green:0.80 blue:0.45 alpha:1.0]; }
+static NSColor* colAmber(void)  { return [NSColor colorWithCalibratedRed:1.0 green:0.75 blue:0.15 alpha:1.0]; }
 
-// Horizontal meter bar. Primitive ivars only. style:
+// Horizontal meter bar. Primitive ivars only (no object ivars). style:
 // 0 = accent fill, 1 = warn fill (inverted), 2 = LUFS bar with zones.
 @interface BarView : NSView {
 @public
@@ -72,7 +68,9 @@ static NSColor* colWarn(void)   { return [NSColor colorWithCalibratedRed:1.0 gre
     return self;
 }
 - (void)drawRect:(NSRect)dirty {
-    // Display thread: inline NSColor literals only (Rosetta-safe).
+    // Runs on the CA display thread inside the host under Rosetta: use ONLY
+    // inline NSColor literals and primitive ivars here (proven safe); calling
+    // helper functions that return NSColor* from drawRect crashed Logic.
     @try {
         NSRect r = self.bounds;
         [[NSColor colorWithCalibratedWhite:0.04 alpha:1.0] setFill];
@@ -94,6 +92,7 @@ static NSColor* colWarn(void)   { return [NSColor colorWithCalibratedRed:1.0 gre
             NSRectFill(NSMakeRect(x0 + span * z1, y0, span * (z2 - z1), h));
             [[NSColor colorWithCalibratedRed:1.0 green:0.42 blue:0.18 alpha:1.0] setFill];
             NSRectFill(NSMakeRect(x0 + span * z2, y0, span * (1.0f - z2), h));
+            // level marker
             [[NSColor colorWithCalibratedWhite:1.0 alpha:1.0] setFill];
             NSRectFill(NSMakeRect(x0 + w - 1, y0, 2, h));
         } else {
@@ -111,11 +110,12 @@ static NSColor* colWarn(void)   { return [NSColor colorWithCalibratedRed:1.0 gre
 }
 @end
 
-// Small circular "logo" dot. Display thread: inline colors only.
+// Small circular "logo" dot.
 @interface DotView : NSView
 @end
 @implementation DotView
 - (void)drawRect:(NSRect)dirty {
+    // Inline color literals only in drawRect (CA display thread, Rosetta-safe).
     @try {
         NSRect r = NSInsetRect(self.bounds, 2, 2);
         NSBezierPath* p = [NSBezierPath bezierPathWithOvalInRect:r];
@@ -128,112 +128,10 @@ static NSColor* colWarn(void)   { return [NSColor colorWithCalibratedRed:1.0 gre
 }
 @end
 
-// Rotary knob control. Primitive ivars only; inline colors in drawRect.
-// Drag vertically to change value (150 px = full range); double-click resets
-// to the parameter default. Acts as an NSControl so the existing
-// controlChanged:/refreshControls binding (tag = param id) works unchanged.
-@interface KnobView : NSControl {
-@public
-    double kMin, kMax, kVal, kDef;
-    double dragY, dragVal;
-}
-@end
-@implementation KnobView
-- (instancetype)initWithFrame:(NSRect)r {
-    self = [super initWithFrame:r];
-    if (self) { kMin = 0; kMax = 1; kVal = 0; kDef = 0; dragY = 0; dragVal = 0; }
-    return self;
-}
-- (double)doubleValue { return kVal; }
-- (void)setDoubleValue:(double)v {
-    if (v < kMin) v = kMin;
-    if (v > kMax) v = kMax;
-    kVal = v;
-    [self setNeedsDisplay:YES];
-}
-- (BOOL)acceptsFirstMouse:(id)sender { return YES; }
-- (void)mouseDown:(NSEvent*)e {
-    @try {
-        if ([e clickCount] >= 2) {           // double-click: reset to default
-            kVal = kDef;
-            [self setNeedsDisplay:YES];
-            if (self.target && self.action)
-                [self.target performSelector:self.action withObject:self];
-            return;
-        }
-        dragY = [e locationInView:self].y;
-        dragVal = kVal;
-    } @catch (NSException* x) {}
-}
-- (void)mouseDragged:(NSEvent*)e {
-    @try {
-        double dy = dragY - [e locationInView:self].y;
-        double sens = (kMax > kMin) ? (kMax - kMin) / 150.0 : 0.0;
-        double v = dragVal + dy * sens;
-        if (v < kMin) v = kMin;
-        if (v > kMax) v = kMax;
-        kVal = v;
-        [self setNeedsDisplay:YES];
-        if (self.target && self.action)
-            [self.target performSelector:self.action withObject:self];
-    } @catch (NSException* x) {}
-}
-- (void)drawRect:(NSRect)dirty {
-    // Display thread: inline NSColor literals only (Rosetta-safe).
-    @try {
-        NSRect r = self.bounds;
-        double cx = r.origin.x + r.size.width / 2.0;
-        double cy = r.origin.y + r.size.height / 2.0;
-        CGFloat rad = (CGFloat)(fmin(r.size.width, r.size.height) / 2.0) - 3.0;
-        if (rad < 4) rad = 4;
-        double frac = (kMax > kMin) ? (kVal - kMin) / (kMax - kMin) : 0.0;
-        if (frac < 0) frac = 0; if (frac > 1) frac = 1;
-        // knob sweep: 270 deg, from 7:30 (225 deg) clockwise through 12:00 to 4:30
-        double a0 = 225.0;
-        double a1 = a0 - 270.0 * frac;           // pointer angle (deg, math convention)
-        // track
-        NSBezierPath* track = [NSBezierPath bezierPath];
-        [track appendBezierPathWithArcWithCenter:NSMakePoint(cx, cy) radius:rad
-                                     startAngle:a0 endAngle:a0 - 270.0 clockwise:YES];
-        [[NSColor colorWithCalibratedWhite:0.22 alpha:1.0] setStroke];
-        [track setLineWidth:3.0];
-        [track stroke];
-        // value arc
-        if (frac > 0.001) {
-            NSBezierPath* arc = [NSBezierPath bezierPath];
-            [arc appendBezierPathWithArcWithCenter:NSMakePoint(cx, cy) radius:rad
-                                       startAngle:a0 endAngle:a1 clockwise:YES];
-            [[NSColor colorWithCalibratedRed:0.20 green:0.60 blue:1.0 alpha:1.0] setStroke];
-            [arc setLineWidth:3.0];
-            [arc stroke];
-        }
-        // body
-        NSBezierPath* body = [NSBezierPath bezierPathWithOvalInRect:
-                              NSMakeRect(cx - rad + 4, cy - rad + 4, (rad - 4) * 2, (rad - 4) * 2)];
-        [[NSColor colorWithCalibratedWhite:0.16 alpha:1.0] setFill];
-        [body fill];
-        [[NSColor colorWithCalibratedWhite:0.30 alpha:1.0] setStroke];
-        [body setLineWidth:1.0];
-        [body stroke];
-        // pointer
-        double ar = a1 * M_PI / 180.0;
-        NSPoint p0 = NSMakePoint(cx + cos(ar) * (rad * 0.35), cy + sin(ar) * (rad * 0.35));
-        NSPoint p1 = NSMakePoint(cx + cos(ar) * (rad - 2), cy + sin(ar) * (rad - 2));
-        NSBezierPath* ptr = [NSBezierPath bezierPath];
-        [ptr moveToPoint:p0];
-        [ptr lineToPoint:p1];
-        [[NSColor colorWithCalibratedWhite:0.92 alpha:1.0] setStroke];
-        [ptr setLineWidth:2.0];
-        [ptr stroke];
-    } @catch (NSException* e) {}
-}
-@end
-
 @interface MasteringAUView : NSView {
     AudioUnit _au;
-    NSView* _content;                   // logical 1280x880 UI; frame follows window, bounds fixed -> scales
     NSTimer* _timer;
-    NSMutableDictionary* _sliders;      // @(pid) -> NSControl (NSSlider or KnobView)
+    NSMutableDictionary* _sliders;      // @(pid) -> NSSlider
     NSMutableDictionary* _valueLabels;  // @(pid) -> NSTextField
     NSMutableDictionary* _checks;       // @(pid) -> NSButton
     NSMutableDictionary* _popups;       // @(pid) -> NSPopUpButton
@@ -253,11 +151,6 @@ static NSColor* colWarn(void)   { return [NSColor colorWithCalibratedRed:1.0 gre
     self = [super initWithFrame:frame];
     if (!self) return nil;
     _au = au;
-    // Content view keeps logical bounds (1280x880); its frame tracks the host
-    // window, so AppKit scales drawing AND hit-testing automatically.
-    _content = [[NSView alloc] initWithFrame:frame];
-    [_content setBoundsSize:NSMakeSize(1280.0, 880.0)];
-    [self addSubview:_content];
     _sliders = [NSMutableDictionary new];
     _valueLabels = [NSMutableDictionary new];
     _checks = [NSMutableDictionary new];
@@ -265,7 +158,6 @@ static NSColor* colWarn(void)   { return [NSColor colorWithCalibratedRed:1.0 gre
     _meterLabels = [NSMutableDictionary new];
     _meterBars = [NSMutableArray new];
     _grBars = [NSMutableDictionary new];
-    _presetPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(0, 0, 210, 26) pullsDown:NO];
     self.wantsLayer = YES;
     self.layer.backgroundColor = colBg().CGColor;
     @try {
@@ -281,7 +173,6 @@ static NSColor* colWarn(void)   { return [NSColor colorWithCalibratedRed:1.0 gre
 
 - (void)dealloc {
     [_timer invalidate];
-    [_content release];
     [_presetPopup release];
     [_sliders release];
     [_valueLabels release];
@@ -293,15 +184,6 @@ static NSColor* colWarn(void)   { return [NSColor colorWithCalibratedRed:1.0 gre
     [super dealloc];
 }
 
-// Host resized the plugin window: just let the content view's frame follow;
-// its bounds stay logical (1280x880) so the whole UI scales to fit.
-- (void)setFrameSize:(NSSize)s {
-    @try {
-        [super setFrameSize:s];
-        _content.frame = self.bounds;
-    } @catch (NSException* e) {}
-}
-
 #pragma mark - helpers
 
 - (NSTextField*)makeLabel:(NSString*)s frame:(NSRect)r size:(CGFloat)fs bold:(BOOL)bold color:(NSColor*)c {
@@ -311,7 +193,7 @@ static NSColor* colWarn(void)   { return [NSColor colorWithCalibratedRed:1.0 gre
     t.textColor = c;
     t.font = bold ? [NSFont boldSystemFontOfSize:fs] : [NSFont systemFontOfSize:fs];
     t.alignment = NSLeftTextAlignment;
-    [_content addSubview:t];
+    [self addSubview:t];
     return [t autorelease];
 }
 
@@ -322,7 +204,7 @@ static NSColor* colWarn(void)   { return [NSColor colorWithCalibratedRed:1.0 gre
     card.layer.backgroundColor = colCard().CGColor;
     card.layer.borderColor = colCardEdge().CGColor;
     card.layer.borderWidth = 1.0;
-    [_content addSubview:card];
+    [self addSubview:card];
     [self makeLabel:title frame:NSMakeRect(r.origin.x + 12, r.origin.y + r.size.height - 20,
                                            r.size.width - 24, 15)
                size:11 bold:YES color:colAccent()];
@@ -353,7 +235,8 @@ static NSColor* colWarn(void)   { return [NSColor colorWithCalibratedRed:1.0 gre
     return [NSString stringWithFormat:@"%.2f", (double)v];
 }
 
-// Slider cell (EQ / multiband detail cards): slider on top, value below.
+// Slider cell: slider on top, small right-aligned value readout below it.
+// Cell occupies r (slider) plus 11 pt below for the value label.
 - (NSSlider*)addSliderCell:(uint32_t)pid frame:(NSRect)r {
     const ParamDesc& d = paramDescs()[pid];
     NSSlider* s = [[NSSlider alloc] initWithFrame:NSMakeRect(r.origin.x, r.origin.y, r.size.width, 15)];
@@ -364,35 +247,13 @@ static NSColor* colWarn(void)   { return [NSColor colorWithCalibratedRed:1.0 gre
     s.target = self;
     s.action = @selector(controlChanged:);
     [s setControlSize:NSSmallControlSize];
-    [_content addSubview:s];
+    [self addSubview:s];
     _sliders[@(pid)] = s;
     NSTextField* vl = [self makeLabel:@"" frame:NSMakeRect(r.origin.x, r.origin.y - 11, r.size.width, 11)
                                  size:8 bold:NO color:colText()];
     vl.alignment = NSRightTextAlignment;
     _valueLabels[@(pid)] = vl;
     return [s autorelease];
-}
-
-// Rotary knob cell (signal-flow mini cards): knob on top, name + value below.
-- (KnobView*)addKnobCell:(uint32_t)pid x:(CGFloat)x y:(CGFloat)y w:(CGFloat)w name:(NSString*)name {
-    const ParamDesc& d = paramDescs()[pid];
-    CGFloat dia = fmin(36.0, w - 6);
-    KnobView* k = [[KnobView alloc] initWithFrame:NSMakeRect(x + (w - dia) / 2, y, dia, dia)];
-    k->kMin = d.minV;
-    k->kMax = d.maxV;
-    k->kDef = d.defV;
-    k->kVal = d.defV;
-    k.tag = (NSInteger)pid;
-    k.target = self;
-    k.action = @selector(controlChanged:);
-    [_content addSubview:k];
-    _sliders[@(pid)] = k;
-    NSTextField* nl = [self makeLabel:name frame:NSMakeRect(x, y - 11, w, 10) size:8 bold:NO color:colDim()];
-    nl.alignment = NSCenterTextAlignment;
-    NSTextField* vl = [self makeLabel:@"" frame:NSMakeRect(x, y - 21, w, 10) size:8 bold:NO color:colText()];
-    vl.alignment = NSCenterTextAlignment;
-    _valueLabels[@(pid)] = vl;
-    return [k autorelease];
 }
 
 - (NSButton*)addCheck:(uint32_t)pid label:(NSString*)label frame:(NSRect)r {
@@ -404,7 +265,7 @@ static NSColor* colWarn(void)   { return [NSColor colorWithCalibratedRed:1.0 gre
     b.action = @selector(controlChanged:);
     b.font = [NSFont systemFontOfSize:10];
     b.bezelStyle = NSRoundedBezelStyle;
-    [_content addSubview:b];
+    [self addSubview:b];
     _checks[@(pid)] = b;
     return [b autorelease];
 }
@@ -416,7 +277,7 @@ static NSColor* colWarn(void)   { return [NSColor colorWithCalibratedRed:1.0 gre
     p.target = self;
     p.action = @selector(controlChanged:);
     p.font = [NSFont systemFontOfSize:10];
-    [_content addSubview:p];
+    [self addSubview:p];
     _popups[@(pid)] = p;
     return [p autorelease];
 }
@@ -518,35 +379,34 @@ static NSColor* colWarn(void)   { return [NSColor colorWithCalibratedRed:1.0 gre
     } @catch (NSException* e) {}
 }
 
-#pragma mark - layout (fluid: all positions derive from W/H)
+#pragma mark - layout
 
 - (void)buildUI {
-    const CGFloat W = _content.bounds.size.width;   // logical 1280
-    const CGFloat H = _content.bounds.size.height;  // logical 880
+    const CGFloat W = self.bounds.size.width;
+    const CGFloat H = self.bounds.size.height;
     const CGFloat headerH = 56;
-    const CGFloat top = H - headerH;
+    const CGFloat top = H - headerH;          // 824
     const CGFloat bridgeH = 168;
-    const CGFloat bridgeY = top - 10 - bridgeH;
+    const CGFloat bridgeY = top - 10 - bridgeH; // 646
+    const CGFloat botH = 212;
     const CGFloat botY = 12;
-    const CGFloat botH = fmin(212.0, H * 0.26);
-    const CGFloat midY = botY + botH + 10;
-    const CGFloat midH = bridgeY - 10 - midY;
+    const CGFloat midY = botY + botH + 10;      // 234
+    const CGFloat midH = bridgeY - 10 - midY;   // 402
 
     // ================= header =================
     DotView* dot = [[DotView alloc] initWithFrame:NSMakeRect(16, H - 42, 26, 26)];
-    [_content addSubview:dot];
+    [self addSubview:dot];
     [dot release];
     [self makeLabel:@"MasteringAU" frame:NSMakeRect(50, H - 42, 220, 28) size:22 bold:YES color:colText()];
     [self makeLabel:@"VIBE MASTERING" frame:NSMakeRect(52, H - 52, 150, 10) size:8 bold:YES color:colAccent()];
 
     [self makeLabel:@"PRESET" frame:NSMakeRect(284, H - 36, 46, 12) size:9 bold:YES color:colDim()];
-    _presetPopup.frame = NSMakeRect(332, H - 41, 210, 26);
+    _presetPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(332, H - 41, 210, 26) pullsDown:NO];
     _presetPopup.target = self;
     _presetPopup.action = @selector(presetChanged:);
     _presetPopup.font = [NSFont systemFontOfSize:11];
-    [_content addSubview:_presetPopup];
+    [self addSubview:_presetPopup];
     {
-        [_presetPopup removeAllItems];
         UInt32 size = sizeof(CFArrayRef);
         CFArrayRef arr = nullptr;
         if (AudioUnitGetProperty(_au, kAudioUnitProperty_FactoryPresets, kAudioUnitScope_Global, 0,
@@ -566,22 +426,17 @@ static NSColor* colWarn(void)   { return [NSColor colorWithCalibratedRed:1.0 gre
 
     // ================= meter bridge (full width, top) =================
     [self cardWithFrame:NSMakeRect(12, bridgeY, W - 24, bridgeH) title:@"METER BRIDGE \u00b7 BS.1770-4 LOUDNESS"];
-    const CGFloat bx0 = 28, bTop = bridgeY + bridgeH;
-
-    const CGFloat barX = fmax(230.0, W * 0.195);
-    const CGFloat grBlockW = fmin(346.0, W * 0.28);
-    const CGFloat barW = W - 24 - barX - grBlockW - 30;
-    const CGFloat grX = barX + barW + 30;
+    const CGFloat bx0 = 28, bTop = bridgeY + bridgeH;   // card inner origin/top
 
     // left: big integrated readout
     [self makeLabel:@"INTEGRATED" frame:NSMakeRect(bx0, bTop - 52, 110, 11) size:8 bold:YES color:colDim()];
-    _intLabel = [self makeLabel:@"-120.0 LUFS" frame:NSMakeRect(bx0, bTop - 92, barX - bx0 - 14, 38) size:32 bold:YES color:colAccent()];
+    _intLabel = [self makeLabel:@"-120.0 LUFS" frame:NSMakeRect(bx0, bTop - 92, 210, 38) size:32 bold:YES color:colAccent()];
 
     // middle: wide zone LUFS bar + scale ticks + 4 readout cells
-    const CGFloat barY = bTop - 74, barH = 26;
+    const CGFloat barX = 250, barW = 640, barY = bTop - 74, barH = 26;
     BarView* lufsBar = [[BarView alloc] initWithFrame:NSMakeRect(barX, barY, barW, barH)];
     lufsBar->minV = -36.0f; lufsBar->maxV = 3.0f; lufsBar->level = -120.0f; lufsBar->style = 2;
-    [_content addSubview:lufsBar];
+    [self addSubview:lufsBar];
     [_meterBars addObject:lufsBar];
     [lufsBar release];
     {
@@ -608,6 +463,7 @@ static NSColor* colWarn(void)   { return [NSColor colorWithCalibratedRed:1.0 gre
     }
 
     // right: gain reduction bars LIM + B1..B4
+    const CGFloat grX = 912, grW = W - 24 - grX - 12;
     [self makeLabel:@"GAIN REDUCTION" frame:NSMakeRect(grX, bTop - 52, 180, 11) size:8 bold:YES color:colDim()];
     {
         const int grIds[5] = { kMeterLimGR, kMeterMbGR0, kMeterMbGR1, kMeterMbGR2, kMeterMbGR3 };
@@ -616,12 +472,12 @@ static NSColor* colWarn(void)   { return [NSColor colorWithCalibratedRed:1.0 gre
         for (int i = 0; i < 5; ++i) {
             [self makeLabel:[NSString stringWithUTF8String:grNames[i]]
                       frame:NSMakeRect(grX, gy, 26, 11) size:8 bold:NO color:colDim()];
-            BarView* bar = [[BarView alloc] initWithFrame:NSMakeRect(grX + 30, gy, grBlockW - 116, 11)];
+            BarView* bar = [[BarView alloc] initWithFrame:NSMakeRect(grX + 30, gy, grW - 116, 11)];
             bar->minV = 0.0f; bar->maxV = 24.0f; bar->level = 0.0f; bar->inverted = YES; bar->style = 1;
-            [_content addSubview:bar];
+            [self addSubview:bar];
             _grBars[@(grIds[i])] = bar;
             [bar release];
-            NSTextField* vl = [self makeLabel:@"0.0" frame:NSMakeRect(grX + grBlockW - 80, gy, 80, 11) size:9 bold:NO color:colText()];
+            NSTextField* vl = [self makeLabel:@"0.0" frame:NSMakeRect(grX + grW - 80, gy, 80, 11) size:9 bold:NO color:colText()];
             vl.alignment = NSRightTextAlignment;
             _meterLabels[@(grIds[i])] = vl;
             gy -= 15;
@@ -629,26 +485,24 @@ static NSColor* colWarn(void)   { return [NSColor colorWithCalibratedRed:1.0 gre
     }
 
     // ================= middle row: EQ + MULTIBAND =================
-    const CGFloat eqX = 12, eqW = (W - 24 - 8) * 0.495;
+    const CGFloat eqX = 12, eqW = 620;
     const CGFloat mbX = eqX + eqW + 8, mbW = W - 12 - mbX;
     [self cardWithFrame:NSMakeRect(eqX, midY, eqW, midH) title:@"EQ \u00b7 6 BAND"];
     [self cardWithFrame:NSMakeRect(mbX, midY, mbW, midH) title:@"MULTIBAND COMPRESSOR \u00b7 4 BAND"];
 
-    // ---- EQ card (sliders) ----
+    // ---- EQ card ----
     {
         const CGFloat x0 = eqX + 14;
         const CGFloat hdrY = midY + midH - 40;
         [self makeLabel:@"Band" frame:NSMakeRect(x0, hdrY, 30, 11) size:8 bold:YES color:colDim()];
         [self makeLabel:@"Type" frame:NSMakeRect(x0 + 64, hdrY, 100, 11) size:8 bold:YES color:colDim()];
         const char* eqCols[3] = { "FREQ", "GAIN", "Q" };
-        const CGFloat cellW = (eqW - 28 - 172) / 3.0, cellX0 = x0 + 172;
+        const CGFloat cellW = 140, cellX0 = x0 + 172;
         for (int c = 0; c < 3; ++c)
             [self makeLabel:[NSString stringWithUTF8String:eqCols[c]]
                       frame:NSMakeRect(cellX0 + c * cellW, hdrY, cellW, 11) size:8 bold:YES color:colDim()];
-        const CGFloat ey0 = hdrY - 26;
-        const CGFloat rowStep = fmax(30.0, (ey0 - (midY + 18)) / kNumEqBands);
+        CGFloat ey = hdrY - 26;
         for (int b = 0; b < kNumEqBands; ++b) {
-            CGFloat ey = ey0 - b * rowStep;
             [self makeLabel:[NSString stringWithFormat:@"EQ%d", b + 1]
                       frame:NSMakeRect(x0, ey + 3, 30, 15) size:11 bold:YES color:colAccent()];
             [self addCheck:eqParam(b, EqEnable) label:@"" frame:NSMakeRect(x0 + 34, ey + 1, 26, 16)];
@@ -657,10 +511,11 @@ static NSColor* colWarn(void)   { return [NSColor colorWithCalibratedRed:1.0 gre
             [self addSliderCell:eqParam(b, EqFreq) frame:NSMakeRect(cellX0 + 0 * cellW, ey, cellW, 15)];
             [self addSliderCell:eqParam(b, EqGain) frame:NSMakeRect(cellX0 + 1 * cellW, ey, cellW, 15)];
             [self addSliderCell:eqParam(b, EqQ)    frame:NSMakeRect(cellX0 + 2 * cellW, ey, cellW, 15)];
+            ey -= 46;
         }
     }
 
-    // ---- MULTIBAND card (sliders) ----
+    // ---- MULTIBAND card ----
     {
         const CGFloat x0 = mbX + 14;
         const CGFloat iw = mbW - 28;
@@ -676,28 +531,26 @@ static NSColor* colWarn(void)   { return [NSColor colorWithCalibratedRed:1.0 gre
             [self addSliderCell:xoIds[i] frame:NSMakeRect(cx, hdrY - 40, xoW, 15)];
         }
         const CGFloat colHdrY = hdrY - 72;
-        const CGFloat cellW = (iw - 62) / 5.0, cellX0 = x0 + 62;
+        const CGFloat cellW = 106, cellX0 = x0 + 62;
         [self makeLabel:@"Band" frame:NSMakeRect(x0, colHdrY, 30, 11) size:8 bold:YES color:colDim()];
         const char* mbCols[5] = { "THR", "RATIO", "ATK", "REL", "MAKEUP" };
         for (int c = 0; c < 5; ++c)
             [self makeLabel:[NSString stringWithUTF8String:mbCols[c]]
                       frame:NSMakeRect(cellX0 + c * cellW, colHdrY, cellW, 11) size:8 bold:YES color:colDim()];
-        const CGFloat by0 = colHdrY - 26;
-        const CGFloat rowStep = fmax(30.0, (by0 - (midY + 18)) / kNumMbBands);
+        CGFloat by = colHdrY - 26;
         for (int b = 0; b < kNumMbBands; ++b) {
-            CGFloat by = by0 - b * rowStep;
             [self makeLabel:[NSString stringWithFormat:@"B%d", b + 1]
                       frame:NSMakeRect(x0, by + 3, 30, 15) size:11 bold:YES color:colWarn()];
             [self addCheck:mbParam(b, MbEnable) label:@"" frame:NSMakeRect(x0 + 34, by + 1, 26, 16)];
             const uint32_t fields[5] = { MbThresh, MbRatio, MbAttack, MbRelease, MbMakeup };
             for (int f = 0; f < 5; ++f)
                 [self addSliderCell:mbParam(b, fields[f]) frame:NSMakeRect(cellX0 + f * cellW, by, cellW, 15)];
+            by -= 46;
         }
     }
 
-    // ================= bottom row: signal-flow mini cards (rotary knobs) =================
-    const CGFloat mcGap = 8, mcX0 = 12;
-    const CGFloat mcW = (W - 24 - 5 * mcGap) / 6.0;
+    // ================= bottom row: signal-flow mini cards =================
+    const CGFloat mcW = 202, mcGap = 8, mcX0 = 12;
     const char* mcTitles[6] = { "1 \u00b7 INPUT", "2 \u00b7 HIGH-PASS", "3 \u00b7 STEREO",
                                 "4 \u00b7 SATURATION", "5 \u00b7 LIMITER", "6 \u00b7 OUTPUT" };
     for (int i = 0; i < 6; ++i) {
@@ -710,48 +563,74 @@ static NSColor* colWarn(void)   { return [NSColor colorWithCalibratedRed:1.0 gre
             ar.alignment = NSCenterTextAlignment;
         }
     }
-    const CGFloat knobRowY = botY + botH - 102;
-    // card 1: INPUT
+    // helper locals for mini-card content
+    // card content top: title row then controls
+    // card 1: INPUT — input gain
     {
-        CGFloat ix = mcX0 + 10, iw = mcW - 20;
-        [self addKnobCell:P_InputGain x:ix y:knobRowY w:iw name:@"Input gain"];
+        CGFloat cx = mcX0, ix = cx + 10, iw = mcW - 20;
+        CGFloat y = botY + botH - 40;
+        [self makeLabel:@"Input gain" frame:NSMakeRect(ix, y, 70, 12) size:8 bold:NO color:colDim()];
+        [self addSliderCell:P_InputGain frame:NSMakeRect(ix + 66, y + 1, iw - 66, 15)];
     }
-    // card 2: HIGH-PASS
+    // card 2: HIGH-PASS — prominent enable + freq
     {
         CGFloat cx = mcX0 + 1 * (mcW + mcGap), ix = cx + 10, iw = mcW - 20;
-        [self addCheck:P_HpEnable label:@"ENABLED" frame:NSMakeRect(ix, botY + botH - 42, iw, 20)];
-        [self addKnobCell:P_HpFreq x:ix y:knobRowY w:iw name:@"Cutoff"];
+        CGFloat y = botY + botH - 40;
+        [self addCheck:P_HpEnable label:@"ENABLED" frame:NSMakeRect(ix, y, iw, 20)];
+        y -= 30;
+        [self makeLabel:@"Cutoff" frame:NSMakeRect(ix, y, 70, 12) size:8 bold:NO color:colDim()];
+        [self addSliderCell:P_HpFreq frame:NSMakeRect(ix + 66, y + 1, iw - 66, 15)];
     }
-    // card 3: STEREO
+    // card 3: STEREO — mono low enable + freq + width
     {
         CGFloat cx = mcX0 + 2 * (mcW + mcGap), ix = cx + 10, iw = mcW - 20;
-        [self addCheck:P_MonoLowEnable label:@"MONO LOW" frame:NSMakeRect(ix, botY + botH - 42, iw, 20)];
-        [self addKnobCell:P_MonoLowFreq x:ix y:knobRowY w:iw / 2 name:@"Mono freq"];
-        [self addKnobCell:P_Width x:ix + iw / 2 y:knobRowY w:iw / 2 name:@"Width"];
+        CGFloat y = botY + botH - 40;
+        [self addCheck:P_MonoLowEnable label:@"MONO LOW" frame:NSMakeRect(ix, y, iw, 20)];
+        y -= 30;
+        [self makeLabel:@"Mono freq" frame:NSMakeRect(ix, y, 70, 12) size:8 bold:NO color:colDim()];
+        [self addSliderCell:P_MonoLowFreq frame:NSMakeRect(ix + 66, y + 1, iw - 66, 15)];
+        y -= 30;
+        [self makeLabel:@"Width" frame:NSMakeRect(ix, y, 70, 12) size:8 bold:NO color:colDim()];
+        [self addSliderCell:P_Width frame:NSMakeRect(ix + 66, y + 1, iw - 66, 15)];
     }
-    // card 4: SATURATION
+    // card 4: SATURATION — enable + drive + mode + mix
     {
         CGFloat cx = mcX0 + 3 * (mcW + mcGap), ix = cx + 10, iw = mcW - 20;
-        [self addCheck:P_SatEnable label:@"ENABLED" frame:NSMakeRect(ix, botY + botH - 42, iw, 20)];
-        [self addKnobCell:P_SatDrive x:ix y:knobRowY w:iw / 2 name:@"Drive"];
-        [self addKnobCell:P_SatMix x:ix + iw / 2 y:knobRowY w:iw / 2 name:@"Mix"];
-        CGFloat py = knobRowY - 58;
-        [self makeLabel:@"Mode" frame:NSMakeRect(ix, py, 40, 12) size:8 bold:NO color:colDim()];
-        [self addPopup:P_SatMode choices:kSatModeChoices count:3 frame:NSMakeRect(ix + 44, py - 4, iw - 44, 22)];
+        CGFloat y = botY + botH - 40;
+        [self addCheck:P_SatEnable label:@"ENABLED" frame:NSMakeRect(ix, y, iw, 20)];
+        y -= 30;
+        [self makeLabel:@"Drive" frame:NSMakeRect(ix, y, 70, 12) size:8 bold:NO color:colDim()];
+        [self addSliderCell:P_SatDrive frame:NSMakeRect(ix + 66, y + 1, iw - 66, 15)];
+        y -= 30;
+        [self makeLabel:@"Mode" frame:NSMakeRect(ix, y, 70, 12) size:8 bold:NO color:colDim()];
+        [self addPopup:P_SatMode choices:kSatModeChoices count:3 frame:NSMakeRect(ix + 66, y - 4, iw - 66, 22)];
+        y -= 30;
+        [self makeLabel:@"Mix" frame:NSMakeRect(ix, y, 70, 12) size:8 bold:NO color:colDim()];
+        [self addSliderCell:P_SatMix frame:NSMakeRect(ix + 66, y + 1, iw - 66, 15)];
     }
-    // card 5: LIMITER
+    // card 5: LIMITER — enable + ceiling + lookahead + release
     {
         CGFloat cx = mcX0 + 4 * (mcW + mcGap), ix = cx + 10, iw = mcW - 20;
-        [self addCheck:P_LimEnable label:@"ENABLED" frame:NSMakeRect(ix, botY + botH - 42, iw, 20)];
-        [self addKnobCell:P_LimCeiling x:ix y:knobRowY w:iw / 3 name:@"Ceiling"];
-        [self addKnobCell:P_LimLookahead x:ix + iw / 3 y:knobRowY w:iw / 3 name:@"Lookahead"];
-        [self addKnobCell:P_LimRelease x:ix + 2 * iw / 3 y:knobRowY w:iw / 3 name:@"Release"];
+        CGFloat y = botY + botH - 40;
+        [self addCheck:P_LimEnable label:@"ENABLED" frame:NSMakeRect(ix, y, iw, 20)];
+        y -= 30;
+        [self makeLabel:@"Ceiling" frame:NSMakeRect(ix, y, 70, 12) size:8 bold:NO color:colDim()];
+        [self addSliderCell:P_LimCeiling frame:NSMakeRect(ix + 66, y + 1, iw - 66, 15)];
+        y -= 30;
+        [self makeLabel:@"Lookahead" frame:NSMakeRect(ix, y, 70, 12) size:8 bold:NO color:colDim()];
+        [self addSliderCell:P_LimLookahead frame:NSMakeRect(ix + 66, y + 1, iw - 66, 15)];
+        y -= 30;
+        [self makeLabel:@"Release" frame:NSMakeRect(ix, y, 70, 12) size:8 bold:NO color:colDim()];
+        [self addSliderCell:P_LimRelease frame:NSMakeRect(ix + 66, y + 1, iw - 66, 15)];
     }
-    // card 6: OUTPUT
+    // card 6: OUTPUT — output trim + dither
     {
         CGFloat cx = mcX0 + 5 * (mcW + mcGap), ix = cx + 10, iw = mcW - 20;
-        [self addCheck:P_DitherEnable label:@"DITHER" frame:NSMakeRect(ix, botY + botH - 42, iw, 20)];
-        [self addKnobCell:P_OutputTrim x:ix y:knobRowY w:iw name:@"Output trim"];
+        CGFloat y = botY + botH - 40;
+        [self addCheck:P_DitherEnable label:@"DITHER" frame:NSMakeRect(ix, y, iw, 20)];
+        y -= 30;
+        [self makeLabel:@"Output trim" frame:NSMakeRect(ix, y, 70, 12) size:8 bold:NO color:colDim()];
+        [self addSliderCell:P_OutputTrim frame:NSMakeRect(ix + 66, y + 1, iw - 66, 15)];
     }
 }
 
@@ -764,10 +643,8 @@ static NSColor* colWarn(void)   { return [NSColor colorWithCalibratedRed:1.0 gre
 - (unsigned)interfaceVersion { return 0; }
 - (NSString*)description { return @"MasteringAU"; }
 - (NSView*)uiViewForAudioUnit:(AudioUnit)inAudioUnit withSize:(NSSize)inPreferredSize {
-    // Return a moderate window size; the UI inside scales to whatever the
-    // host window ends up being (content bounds are fixed at 1280x880).
-    CGFloat w = (inPreferredSize.width > 0) ? fmin(fmax(inPreferredSize.width, 720.0), 1200.0) : 1180.0;
-    CGFloat h = (inPreferredSize.height > 0) ? fmin(fmax(inPreferredSize.height, 520.0), 820.0) : 800.0;
+    CGFloat w = MAX(inPreferredSize.width, 1280.0);
+    CGFloat h = MAX(inPreferredSize.height, 880.0);
     MasteringAUView* v = [[MasteringAUView alloc] initWithFrame:NSMakeRect(0, 0, w, h) audioUnit:inAudioUnit];
     return [v autorelease];
 }

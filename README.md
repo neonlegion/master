@@ -163,18 +163,17 @@ killall -9 AudioComponentRegistrar pluginkitd
 lsregister -kill -r -domain local -domain user
 ```
 
-In Logic: **Audio FX ▸ Vibe ▸ MasteringAU**. The custom window is laid out
-like modern mastering suites (Pro-L 2 / Ozone style) and **scales to any
-window size** (the UI is drawn at a fixed 1280×880 logical size and scaled to
-fit, so resizing the plugin window works): a full-width **meter bridge** on
-top (big integrated-LUFS readout, zone-gradient LUFS bar with scale ticks,
-momentary/short-term/LRA/true-peak readouts, LIM + B1–B4 gain-reduction
-bars), EQ and multiband detail cards in the middle, and six mini cards along
-the bottom in **signal-flow order** (1 Input → 2 High-pass → 3 Stereo →
-4 Saturation → 5 Limiter → 6 Output) with **rotary knobs** (drag vertically to
-turn, double-click to reset to default) and prominent enable toggles. Same
-five factory presets. Component codes are unchanged
-(`aufx` / `MstB` / `Vibe`), so install only one shell at a time.
+In Logic: **Audio FX ▸ Vibe ▸ MasteringAU**. The custom window (1280×880) is
+laid out like modern mastering suites (Pro-L 2 / Ozone style): a full-width
+**meter bridge** on top (big integrated-LUFS readout, zone-gradient LUFS bar
+with scale ticks, momentary/short-term/LRA/true-peak readouts, LIM + B1–B4
+gain-reduction bars), EQ and multiband detail cards in the middle, and six
+mini cards along the bottom in **signal-flow order** (1 Input → 2 High-pass →
+3 Stereo → 4 Saturation → 5 Limiter → 6 Output) with sliders that show their
+value readouts and prominent enable toggles. Same five factory presets
+(loudness presets are tuned to actually hit their LUFS targets). Component
+codes are unchanged (`aufx` / `MstB` / `Vibe`), so install only one shell at
+a time.
 
 ## Notes / design decisions
 
