@@ -16,7 +16,15 @@ namespace mast {
 // (up to the resampler's passband ripple, < 0.1 dB).
 class TruePeakLimiter {
 public:
-    void setSampleRate(double fs) { fs_ = fs; }
+    void setSampleRate(double fs) {
+        fs_ = fs;
+        // Pre-allocate for the max block size; processBlock must never
+        // heap-allocate on the audio thread (dropouts = crackle).
+        x4L_.reserve(4 * kMaxBlock); x4R_.reserve(4 * kMaxBlock);
+        y4L_.reserve(4 * kMaxBlock); y4R_.reserve(4 * kMaxBlock);
+        gBase_.reserve(kMaxBlock);
+    }
+    static constexpr int kMaxBlock = 8192;
 
     // Internal margin below the user ceiling so the *measured* true peak of
     // the output stays at or below the ceiling even for adversarial full-scale

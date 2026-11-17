@@ -38,6 +38,8 @@ public:
 
     void setSampleRate(double fs) {
         fs_ = fs;
+        tmpL_.reserve(8192); // process() must not heap-allocate per block
+        tmpR_.reserve(8192);
         eq_.setSampleRate(fs);
         mb_.setSampleRate(fs);
         sat_.setSampleRate(fs);

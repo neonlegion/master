@@ -15,7 +15,14 @@ class Saturator {
 public:
     static constexpr int kLatency = 2 * Polyphase4::kBaseDelay; // 48 samples
 
-    void setSampleRate(double fs) { fs_ = fs; }
+    void setSampleRate(double fs) {
+        fs_ = fs;
+        // Pre-allocate for the max block size we support; processBlock must
+        // never heap-allocate on the audio thread (dropouts = crackle).
+        tmp4_.reserve(4 * kMaxBlock);
+        wet_.reserve(kMaxBlock);
+    }
+    static constexpr int kMaxBlock = 8192;
 
     void reset() {
         os_.reset();

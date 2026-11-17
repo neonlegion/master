@@ -14,7 +14,11 @@ public:
     static constexpr int kFFT = 4096;
     static constexpr int kHop = kFFT / 2;
 
-    void setSampleRate(double fs) { fs_ = fs; reset(); }
+    void setSampleRate(double fs) {
+        fs_ = fs;
+        fftBuf_.assign(kFFT, {0.0, 0.0}); // pre-allocate: compute() must not allocate per hop
+        reset();
+    }
 
     void reset() {
         std::fill(ring_.begin(), ring_.end(), 0.0f);
@@ -42,15 +46,14 @@ public:
 private:
     void compute() {
         specDb_.assign(kFFT / 2 + 1, -240.0f);
-        std::vector<std::complex<double>> a(kFFT);
         for (int i = 0; i < kFFT; ++i) {
             double w = 0.5 - 0.5 * std::cos(2.0 * kPi * i / (kFFT - 1)); // Hann
-            a[i] = std::complex<double>(ring_[(idx_ + i) & (kFFT - 1)] * w, 0.0);
+            fftBuf_[i] = std::complex<double>(ring_[(idx_ + i) & (kFFT - 1)] * w, 0.0);
         }
-        fft(a);
+        fft(fftBuf_);
         double norm = 2.0 / (kFFT * 0.5); // coherent gain of Hann = 0.5
         for (int k = 0; k <= kFFT / 2; ++k) {
-            double mag = std::abs(a[k]) * norm;
+            double mag = std::abs(fftBuf_[k]) * norm;
             specDb_[k] = (float)linToDb(std::max(mag, 1e-12));
         }
     }
@@ -82,6 +85,7 @@ private:
     double fs_ = 48000.0;
     std::vector<float> ring_ = std::vector<float>(kFFT, 0.0f);
     std::vector<float> specDb_;
+    std::vector<std::complex<double>> fftBuf_;
     int idx_ = 0, since_ = 0;
     bool ready_ = false;
 };
