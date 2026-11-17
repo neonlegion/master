@@ -163,8 +163,10 @@ killall -9 AudioComponentRegistrar pluginkitd
 lsregister -kill -r -domain local -domain user
 ```
 
-In Logic: **Audio FX ▸ Vibe ▸ MasteringAU**. The custom window (1280×880) is
-laid out like modern mastering suites (Pro-L 2 / Ozone style): a full-width
+In Logic: **Audio FX ▸ Vibe ▸ MasteringAU**. The custom window follows the
+host's preferred size within 1024–1280 × 700–880 (the layout is fluid and
+rebuilds if the host resizes the window), laid out like modern mastering
+suites (Pro-L 2 / Ozone style): a full-width
 **meter bridge** on top (big integrated-LUFS readout, zone-gradient LUFS bar
 with scale ticks, momentary/short-term/LRA/true-peak readouts, LIM + B1–B4
 gain-reduction bars), EQ and multiband detail cards in the middle, and six

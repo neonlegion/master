@@ -20,6 +20,8 @@ public:
     void reset() {
         os_.reset();
         dryDelay_.reset();
+        smDrive_ = drive_;
+        smMix_ = mix_;
     }
 
     void configure(bool enabled, double driveDb, int mode, double mixPercent) {
@@ -35,6 +37,8 @@ public:
             dryDelay_.resize(kLatency);
             dryDelay_.reset();
             os_.reset();
+            smDrive_ = drive_;
+            smMix_ = mix_;
         }
     }
 
@@ -44,10 +48,16 @@ public:
     void processBlock(float* buf, int n) {
         if (!enabled_ || n <= 0) return;
         tmp4_.resize(4 * n);
+        // Smooth drive per over-sample so parameter changes don't step the
+        // waveshaper gain at block boundaries (zipper noise / crackle).
+        const float smCoef = (float)(1.0 - std::exp(-1.0 / (fs_ * 4.0 * 0.005)));
         for (int i = 0; i < n; ++i) {
             float o[4];
             os_.upsample(buf[i], o);
-            for (int p = 0; p < 4; ++p) tmp4_[4 * i + p] = curve(o[p]);
+            for (int p = 0; p < 4; ++p) {
+                smDrive_ += (drive_ - smDrive_) * smCoef;
+                tmp4_[4 * i + p] = curve(o[p], smDrive_);
+            }
         }
         wet_.resize(n);
         int outIdx = 0;
@@ -55,10 +65,12 @@ public:
             float y;
             if (os_.downsample(tmp4_[k], y)) wet_[outIdx++] = y;
         }
-        const float wetGain = (float)mix_;
-        const float dryGain = (float)(1.0 - mix_);
+        const float mixSmCoef = (float)(1.0 - std::exp(-1.0 / (fs_ * 0.005)));
         for (int i = 0; i < n; ++i) {
+            smMix_ += (mix_ - smMix_) * mixSmCoef;
             float dry = dryDelay_.process(buf[i], kLatency);
+            float wetGain = (float)smMix_;
+            float dryGain = (float)(1.0 - smMix_);
             buf[i] = dry * dryGain + wet_[i] * wetGain;
         }
     }
@@ -66,8 +78,7 @@ public:
 private:
     // All curves have unity small-signal gain (dy/dx = 1 at x = 0) and softly
     // bound the output at 1/d for large |x|.
-    inline float curve(float x) const {
-        double d = drive_;
+    inline float curve(float x, double d) const {
         double y;
         switch (mode_) {
             case SatTape: {
@@ -93,8 +104,10 @@ private:
     double fs_ = 48000.0;
     bool enabled_ = false;
     double drive_ = 1.0;
+    double smDrive_ = 1.0;
     int mode_ = SatClean;
     double mix_ = 1.0;
+    double smMix_ = 1.0;
     Polyphase4 os_;
     DelayLine dryDelay_;
     std::vector<float> tmp4_, wet_;

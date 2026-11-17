@@ -131,6 +131,8 @@ static NSColor* colAmber(void)  { return [NSColor colorWithCalibratedRed:1.0 gre
 @interface MasteringAUView : NSView {
     AudioUnit _au;
     NSTimer* _timer;
+    CGFloat _builtW, _builtH;
+    BOOL _building;
     NSMutableDictionary* _sliders;      // @(pid) -> NSSlider
     NSMutableDictionary* _valueLabels;  // @(pid) -> NSTextField
     NSMutableDictionary* _checks;       // @(pid) -> NSButton
@@ -158,6 +160,10 @@ static NSColor* colAmber(void)  { return [NSColor colorWithCalibratedRed:1.0 gre
     _meterLabels = [NSMutableDictionary new];
     _meterBars = [NSMutableArray new];
     _grBars = [NSMutableDictionary new];
+    _builtW = frame.size.width;
+    _builtH = frame.size.height;
+    _building = NO;
+    _presetPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(0, 0, 210, 26) pullsDown:NO];
     self.wantsLayer = YES;
     self.layer.backgroundColor = colBg().CGColor;
     @try {
@@ -169,6 +175,39 @@ static NSColor* colAmber(void)  { return [NSColor colorWithCalibratedRed:1.0 gre
     _timer = [NSTimer scheduledTimerWithTimeInterval:1.0/30.0 target:self
                                             selector:@selector(tick:) userInfo:nil repeats:YES];
     return self;
+}
+
+// Host resized the plugin window: rebuild the fluid layout at the new size.
+- (void)setFrameSize:(NSSize)s {
+    @try {
+        [super setFrameSize:s];
+        if (!_building && _builtW > 0 &&
+            (fabs(s.width - _builtW) > 8 || fabs(s.height - _builtH) > 8)) {
+            _builtW = s.width;
+            _builtH = s.height;
+            [self rebuildUI];
+        }
+    } @catch (NSException* e) {}
+}
+
+- (void)rebuildUI {
+    @try {
+        _building = YES;
+        NSArray* subs = [[[self subviews] copy] autorelease];
+        for (NSView* v in subs) [v removeFromSuperview];
+        [_sliders removeAllObjects];
+        [_valueLabels removeAllObjects];
+        [_checks removeAllObjects];
+        [_popups removeAllObjects];
+        [_meterLabels removeAllObjects];
+        [_meterBars removeAllObjects];
+        [_grBars removeAllObjects];
+        [self buildUI];
+        [self refreshControls];
+        _building = NO;
+    } @catch (NSException* e) {
+        _building = NO;
+    }
 }
 
 - (void)dealloc {
@@ -401,12 +440,13 @@ static NSColor* colAmber(void)  { return [NSColor colorWithCalibratedRed:1.0 gre
     [self makeLabel:@"VIBE MASTERING" frame:NSMakeRect(52, H - 52, 150, 10) size:8 bold:YES color:colAccent()];
 
     [self makeLabel:@"PRESET" frame:NSMakeRect(284, H - 36, 46, 12) size:9 bold:YES color:colDim()];
-    _presetPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(332, H - 41, 210, 26) pullsDown:NO];
+    _presetPopup.frame = NSMakeRect(332, H - 41, 210, 26);
     _presetPopup.target = self;
     _presetPopup.action = @selector(presetChanged:);
     _presetPopup.font = [NSFont systemFontOfSize:11];
     [self addSubview:_presetPopup];
     {
+        [_presetPopup removeAllItems];
         UInt32 size = sizeof(CFArrayRef);
         CFArrayRef arr = nullptr;
         if (AudioUnitGetProperty(_au, kAudioUnitProperty_FactoryPresets, kAudioUnitScope_Global, 0,
@@ -429,11 +469,14 @@ static NSColor* colAmber(void)  { return [NSColor colorWithCalibratedRed:1.0 gre
     const CGFloat bx0 = 28, bTop = bridgeY + bridgeH;   // card inner origin/top
 
     // left: big integrated readout
+    const CGFloat barX = fmax(230.0, W * 0.195);
+    const CGFloat grBlockW = fmin(346.0, W * 0.28);
+    const CGFloat barW = W - 24 - barX - grBlockW - 30;
     [self makeLabel:@"INTEGRATED" frame:NSMakeRect(bx0, bTop - 52, 110, 11) size:8 bold:YES color:colDim()];
-    _intLabel = [self makeLabel:@"-120.0 LUFS" frame:NSMakeRect(bx0, bTop - 92, 210, 38) size:32 bold:YES color:colAccent()];
+    _intLabel = [self makeLabel:@"-120.0 LUFS" frame:NSMakeRect(bx0, bTop - 92, barX - bx0 - 14, 38) size:32 bold:YES color:colAccent()];
 
     // middle: wide zone LUFS bar + scale ticks + 4 readout cells
-    const CGFloat barX = 250, barW = 640, barY = bTop - 74, barH = 26;
+    const CGFloat barY = bTop - 74, barH = 26;
     BarView* lufsBar = [[BarView alloc] initWithFrame:NSMakeRect(barX, barY, barW, barH)];
     lufsBar->minV = -36.0f; lufsBar->maxV = 3.0f; lufsBar->level = -120.0f; lufsBar->style = 2;
     [self addSubview:lufsBar];
@@ -463,7 +506,7 @@ static NSColor* colAmber(void)  { return [NSColor colorWithCalibratedRed:1.0 gre
     }
 
     // right: gain reduction bars LIM + B1..B4
-    const CGFloat grX = 912, grW = W - 24 - grX - 12;
+    const CGFloat grX = barX + barW + 30, grW = grBlockW;
     [self makeLabel:@"GAIN REDUCTION" frame:NSMakeRect(grX, bTop - 52, 180, 11) size:8 bold:YES color:colDim()];
     {
         const int grIds[5] = { kMeterLimGR, kMeterMbGR0, kMeterMbGR1, kMeterMbGR2, kMeterMbGR3 };
@@ -485,7 +528,7 @@ static NSColor* colAmber(void)  { return [NSColor colorWithCalibratedRed:1.0 gre
     }
 
     // ================= middle row: EQ + MULTIBAND =================
-    const CGFloat eqX = 12, eqW = 620;
+    const CGFloat eqX = 12, eqW = (W - 24 - 8) * 0.495;
     const CGFloat mbX = eqX + eqW + 8, mbW = W - 12 - mbX;
     [self cardWithFrame:NSMakeRect(eqX, midY, eqW, midH) title:@"EQ \u00b7 6 BAND"];
     [self cardWithFrame:NSMakeRect(mbX, midY, mbW, midH) title:@"MULTIBAND COMPRESSOR \u00b7 4 BAND"];
@@ -497,11 +540,12 @@ static NSColor* colAmber(void)  { return [NSColor colorWithCalibratedRed:1.0 gre
         [self makeLabel:@"Band" frame:NSMakeRect(x0, hdrY, 30, 11) size:8 bold:YES color:colDim()];
         [self makeLabel:@"Type" frame:NSMakeRect(x0 + 64, hdrY, 100, 11) size:8 bold:YES color:colDim()];
         const char* eqCols[3] = { "FREQ", "GAIN", "Q" };
-        const CGFloat cellW = 140, cellX0 = x0 + 172;
+        const CGFloat cellW = (eqW - 28 - 172) / 3.0, cellX0 = x0 + 172;
         for (int c = 0; c < 3; ++c)
             [self makeLabel:[NSString stringWithUTF8String:eqCols[c]]
                       frame:NSMakeRect(cellX0 + c * cellW, hdrY, cellW, 11) size:8 bold:YES color:colDim()];
         CGFloat ey = hdrY - 26;
+        const CGFloat eqStep = fmax(30.0, (ey - (midY + 18)) / kNumEqBands);
         for (int b = 0; b < kNumEqBands; ++b) {
             [self makeLabel:[NSString stringWithFormat:@"EQ%d", b + 1]
                       frame:NSMakeRect(x0, ey + 3, 30, 15) size:11 bold:YES color:colAccent()];
@@ -511,7 +555,7 @@ static NSColor* colAmber(void)  { return [NSColor colorWithCalibratedRed:1.0 gre
             [self addSliderCell:eqParam(b, EqFreq) frame:NSMakeRect(cellX0 + 0 * cellW, ey, cellW, 15)];
             [self addSliderCell:eqParam(b, EqGain) frame:NSMakeRect(cellX0 + 1 * cellW, ey, cellW, 15)];
             [self addSliderCell:eqParam(b, EqQ)    frame:NSMakeRect(cellX0 + 2 * cellW, ey, cellW, 15)];
-            ey -= 46;
+            ey -= eqStep;
         }
     }
 
@@ -531,13 +575,14 @@ static NSColor* colAmber(void)  { return [NSColor colorWithCalibratedRed:1.0 gre
             [self addSliderCell:xoIds[i] frame:NSMakeRect(cx, hdrY - 40, xoW, 15)];
         }
         const CGFloat colHdrY = hdrY - 72;
-        const CGFloat cellW = 106, cellX0 = x0 + 62;
+        const CGFloat cellW = (iw - 62) / 5.0, cellX0 = x0 + 62;
         [self makeLabel:@"Band" frame:NSMakeRect(x0, colHdrY, 30, 11) size:8 bold:YES color:colDim()];
         const char* mbCols[5] = { "THR", "RATIO", "ATK", "REL", "MAKEUP" };
         for (int c = 0; c < 5; ++c)
             [self makeLabel:[NSString stringWithUTF8String:mbCols[c]]
                       frame:NSMakeRect(cellX0 + c * cellW, colHdrY, cellW, 11) size:8 bold:YES color:colDim()];
         CGFloat by = colHdrY - 26;
+        const CGFloat mbStep = fmax(30.0, (by - (midY + 18)) / kNumMbBands);
         for (int b = 0; b < kNumMbBands; ++b) {
             [self makeLabel:[NSString stringWithFormat:@"B%d", b + 1]
                       frame:NSMakeRect(x0, by + 3, 30, 15) size:11 bold:YES color:colWarn()];
@@ -545,12 +590,13 @@ static NSColor* colAmber(void)  { return [NSColor colorWithCalibratedRed:1.0 gre
             const uint32_t fields[5] = { MbThresh, MbRatio, MbAttack, MbRelease, MbMakeup };
             for (int f = 0; f < 5; ++f)
                 [self addSliderCell:mbParam(b, fields[f]) frame:NSMakeRect(cellX0 + f * cellW, by, cellW, 15)];
-            by -= 46;
+            by -= mbStep;
         }
     }
 
     // ================= bottom row: signal-flow mini cards =================
-    const CGFloat mcW = 202, mcGap = 8, mcX0 = 12;
+    const CGFloat mcGap = 8, mcX0 = 12;
+    const CGFloat mcW = (W - 24 - 5 * mcGap) / 6.0;
     const char* mcTitles[6] = { "1 \u00b7 INPUT", "2 \u00b7 HIGH-PASS", "3 \u00b7 STEREO",
                                 "4 \u00b7 SATURATION", "5 \u00b7 LIMITER", "6 \u00b7 OUTPUT" };
     for (int i = 0; i < 6; ++i) {
@@ -643,8 +689,11 @@ static NSColor* colAmber(void)  { return [NSColor colorWithCalibratedRed:1.0 gre
 - (unsigned)interfaceVersion { return 0; }
 - (NSString*)description { return @"MasteringAU"; }
 - (NSView*)uiViewForAudioUnit:(AudioUnit)inAudioUnit withSize:(NSSize)inPreferredSize {
-    CGFloat w = MAX(inPreferredSize.width, 1280.0);
-    CGFloat h = MAX(inPreferredSize.height, 880.0);
+    // Honor the host's preferred size within a usable range (the layout is
+    // fluid, so smaller windows render correctly); if the host later resizes
+    // the window, setFrameSize: rebuilds the layout.
+    CGFloat w = (inPreferredSize.width > 0) ? fmin(fmax(inPreferredSize.width, 1024.0), 1280.0) : 1152.0;
+    CGFloat h = (inPreferredSize.height > 0) ? fmin(fmax(inPreferredSize.height, 700.0), 880.0) : 780.0;
     MasteringAUView* v = [[MasteringAUView alloc] initWithFrame:NSMakeRect(0, 0, w, h) audioUnit:inAudioUnit];
     return [v autorelease];
 }
